@@ -1,0 +1,23 @@
+allprojects {
+    afterEvaluate {
+        def regressionSources = file(project.minecraft_version.toString() == '1.21.11'
+                ? '../../tests/regression' : 'tests/regression')
+        def regressionClasses = layout.buildDirectory.dir('classes/regression')
+        def regressionWork = file('.tmp/regression-runtime').absolutePath
+        tasks.register('compileLanWorldsRegression', JavaCompile) {
+            dependsOn tasks.named('classes')
+            source = fileTree(regressionSources) { include '*.java' }
+            classpath = sourceSets.main.runtimeClasspath
+            destinationDirectory = regressionClasses
+            options.release = project.minecraft_version.toString() == '1.21.11' ? 21 : 25
+        }
+        tasks.register('lanWorldsRegressionCheck', JavaExec) {
+            dependsOn tasks.named('compileLanWorldsRegression')
+            classpath = files(regressionClasses) + sourceSets.main.runtimeClasspath
+            mainClass = 'LanWorldsRegressionCheck'
+            args project.minecraft_version.toString()
+            systemProperty 'lanworldsRegression.workDir', regressionWork
+            doFirst { new File(regressionWork).mkdirs() }
+        }
+    }
+}

@@ -1,0 +1,113 @@
+plugins {
+    id 'net.fabricmc.fabric-loom' version "${loom_version}"
+    id 'maven-publish'
+}
+
+version = project.mod_version
+group = project.maven_group
+
+base {
+    archivesName = project.archives_base_name
+}
+
+repositories {
+    maven { url = 'https://maven.isxander.dev/releases' }
+    maven { url = 'https://maven.terraformersmc.com/releases' }
+}
+
+def useLocalRuntime = (findProperty('use_local_runtime') ?: 'true').toString().toBoolean()
+def localRuntime = useLocalRuntime && project.minecraft_version.toString() == '26.3'
+
+dependencies {
+    if (localRuntime) {
+        minecraft("com.mojang:minecraft:${project.minecraft_version}") { transitive = false }
+    } else {
+        minecraft "com.mojang:minecraft:${project.minecraft_version}"
+    }
+    implementation "net.fabricmc:fabric-loader:${project.loader_version}"
+    if (localRuntime) {
+        implementation files("libs/fabric-api-${project.fabric_version}.jar")
+        implementation fileTree(dir: 'libs/fabric-api-nested', include: '*.jar')
+        implementation files('libs/brigadier.jar')
+        implementation files('libs/datafixerupper.jar')
+        minecraftRuntimeLibraries files('libs/authlib.jar')
+        minecraftRuntimeLibraries "com.mojang:blocklist:1.0.10"
+        minecraftRuntimeLibraries files('libs/datafixerupper.jar')
+        minecraftRuntimeLibraries files('libs/brigadier.jar')
+        minecraftRuntimeLibraries files('libs/logging.jar')
+        minecraftRuntimeLibraries files('libs/jtracy.jar')
+        implementation files("libs/modmenu-${project.modmenu_version}.jar")
+    } else {
+        implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
+        implementation "com.terraformersmc:modmenu:${project.modmenu_version}"
+    }
+}
+
+if (localRuntime) {
+    configurations.configureEach {
+        exclude group: "com.mojang", module: "brigadier"
+        exclude group: "com.mojang", module: "datafixerupper"
+        exclude group: "com.mojang", module: "jtracy"
+        exclude group: "com.mojang", module: "logging"
+        exclude group: "com.mojang", module: "patchy"
+        exclude group: "com.mojang", module: "text2speech"
+    }
+}
+def modVersion = project.version.toString()
+def minecraftDependency = (findProperty('minecraft_dependency') ?: ">=${project.minecraft_version}").toString()
+tasks.named('processResources') {
+    inputs.property 'version', modVersion
+    inputs.property 'minecraft_dependency', minecraftDependency
+    filesMatching('fabric.mod.json') {
+        expand 'version': modVersion, 'minecraft_dependency': minecraftDependency
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    it.options.release = 25
+}
+
+java {
+    withSourcesJar()
+    sourceCompatibility = JavaVersion.VERSION_25
+    targetCompatibility = JavaVersion.VERSION_25
+}
+
+jar {
+    def archiveBaseName = base.archivesName.get()
+    from('LICENSE') {
+        rename { name -> "${name}_${archiveBaseName}" }
+    }
+}
+
+publishing {
+    publications {
+        create('mavenJava', MavenPublication) {
+            from components.java
+        }
+    }
+    repositories {
+        // Configure a publishing repository for release builds.
+    }
+}
+
+tasks.named("runClient") {
+    jvmArgs "--enable-native-access=ALL-UNNAMED"
+    if (localRuntime) {
+        classpath += files("libs/authlib.jar", "libs/datafixerupper.jar", "libs/brigadier.jar", "libs/logging.jar", "libs/jtracy.jar", "libs/text2speech.jar")
+        classpath += files(layout.buildDirectory.dir("dev-libraries"))
+        dependsOn("unpackDevLibraries")
+    }
+}
+
+if (localRuntime) {
+    tasks.register("unpackDevLibraries", Copy) {
+        duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+        from(zipTree("libs/authlib.jar"))
+        from(zipTree("libs/datafixerupper.jar"))
+        from(zipTree("libs/brigadier.jar"))
+        from(zipTree("libs/jtracy.jar"))
+        from(zipTree("libs/text2speech.jar"))
+        into(layout.buildDirectory.dir("dev-libraries"))
+    }
+}

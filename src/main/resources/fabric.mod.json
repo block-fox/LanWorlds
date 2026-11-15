@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "id": "lanworlds",
+  "version": "${version}",
+  "name": "LanWorlds",
+  "description": "Enhanced vanilla LAN world discovery, details and blocking, with optional Radmin integration.",
+  "authors": [
+    "flexfox0424"
+  ],
+  "contact": {
+    "sources": "https://github.com/block-fox/LanWorlds",
+    "issues": "https://github.com/block-fox/LanWorlds/issues",
+    "homepage": "https://github.com/block-fox/LanWorlds"
+  },
+  "license": "MIT",
+  "icon": "assets/lanworlds/icon.png",
+  "environment": "client",
+  "entrypoints": {
+    "modmenu": [
+      "dev.lanworlds.compat.ModMenuEntrypoint"
+    ],
+    "client": [
+      "dev.lanworlds.LanWorldsClient"
+    ]
+  },
+  "mixins": [
+    "lanworlds.mixins.json"
+  ],
+  "depends": {
+    "minecraft": "${minecraft_dependency}",
+    "fabric-api": "*",
+    "java": ">=25",
+    "fabricloader": ">=0.19.5"
+  },
+  "suggests": {
+    "radminlan": ">=0.3.0",
+    "modmenu": "*"
+  },
+  "breaks": {
+    "radminlan": "<0.3.0"
+  }
+}
