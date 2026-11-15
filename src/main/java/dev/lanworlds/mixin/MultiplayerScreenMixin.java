@@ -13,12 +13,15 @@ import net.minecraft.client.gui.screens.multiplayer.ServerSelectionList;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.gui.screens.multiplayer.JoinMultiplayerScreen;
 import net.minecraft.network.chat.Component;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.ModifyArg;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -28,11 +31,16 @@ import java.util.UUID;
 
 @Mixin(JoinMultiplayerScreen.class)
 public abstract class MultiplayerScreenMixin extends Screen {
+    private static final Logger LANWORLDS$LOGGER = LoggerFactory.getLogger("LanWorlds");
+
     @org.spongepowered.asm.mixin.Shadow
     protected ServerSelectionList serverSelectionList;
 
     @org.spongepowered.asm.mixin.Shadow
     private LanServerDetection.LanServerList lanServerList;
+
+    @org.spongepowered.asm.mixin.Shadow
+    private LanServerDetection.LanServerDetector lanServerDetector;
 
     @org.spongepowered.asm.mixin.Shadow
     private Button editButton;
@@ -42,6 +50,7 @@ public abstract class MultiplayerScreenMixin extends Screen {
 
     private String lanworlds$lastLanSignature = "";
     private int lanworlds$refreshCooldown;
+    private int lanworlds$discoveryRetryCooldown;
     private Button lanworlds$roomDetailsButton;
     private Button lanworlds$roomBlockButton;
 
@@ -52,6 +61,27 @@ public abstract class MultiplayerScreenMixin extends Screen {
         LanWorldsClient.MULTIPLAYER_SCREEN = (Screen)(Object)this;
         if (LanWorldsClient.ROOMS != null) {
             lanworlds$refreshLanEntries();
+        }
+    }
+
+    @Inject(method = "tick", at = @At("HEAD"))
+    private void lanworlds$restoreDiscovery(CallbackInfo ci) {
+        if (lanServerList == null || lanServerDetector != null) return;
+        if (lanworlds$discoveryRetryCooldown > 0) {
+            lanworlds$discoveryRetryCooldown--;
+            return;
+        }
+        // Returning to an initialized parent screen only repositions widgets.
+        // Vanilla removed() stopped discovery, so resume it using its existing
+        // detector cache without rebuilding the list or losing its selection.
+        try {
+            lanServerDetector = new LanServerDetection.LanServerDetector(lanServerList);
+            lanServerDetector.start();
+            LANWORLDS$LOGGER.info("Resumed LAN discovery on the multiplayer screen");
+        } catch (IOException error) {
+            lanServerDetector = null;
+            lanworlds$discoveryRetryCooldown = 100;
+            LANWORLDS$LOGGER.warn("Unable to resume LAN discovery; retrying in five seconds", error);
         }
     }
 
@@ -78,6 +108,7 @@ public abstract class MultiplayerScreenMixin extends Screen {
 
     @Inject(method = "removed", at = @At("HEAD"))
     private void lanworlds$releaseLanFavicons(CallbackInfo ci) {
+        lanworlds$discoveryRetryCooldown = 0;
         LanRoomFaviconCache.clear();
     }
 

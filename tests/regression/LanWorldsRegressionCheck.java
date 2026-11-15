@@ -9,13 +9,18 @@ import net.fabricmc.loader.api.ObjectShare;
 import net.minecraft.SharedConstants;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.server.LanServer;
+import net.minecraft.client.server.LanServerDetection;
 
 import java.lang.reflect.Method;
+import java.net.DatagramPacket;
+import java.net.DatagramSocket;
 import java.net.InetAddress;
+import java.net.MulticastSocket;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -35,6 +40,7 @@ public final class LanWorldsRegressionCheck {
         checkOptionalIntegration();
         checkRoomMatching();
         checkRepositoryShutdown();
+        checkVanillaDiscoveryRestart();
         System.out.println("LANWORLDS_REGRESSION_OK Minecraft=" + minecraftVersion);
     }
 
@@ -284,6 +290,50 @@ public final class LanWorldsRegressionCheck {
             repository.close();
         }
         System.out.println("REPOSITORY_SHUTDOWN_REGRESSION_OK pendingSocket=closed lateDiscovery=ignored");
+    }
+
+    private static void checkVanillaDiscoveryRestart() throws Exception {
+        LanServerDetection.LanServerList cache = new LanServerDetection.LanServerList();
+        var socketField = LanServerDetection.LanServerDetector.class.getDeclaredField("socket");
+        socketField.setAccessible(true);
+        int advertisedPort = 25565;
+        for (String motd : List.of("Before leaving multiplayer", "After returning to multiplayer")) {
+            // Exercise the actual Minecraft detector with the same cache across
+            // removal and recreation. Only send to this computer's loopback.
+            LanServerDetection.LanServerDetector detector = new LanServerDetection.LanServerDetector(cache);
+            MulticastSocket socket = (MulticastSocket) socketField.get(detector);
+            try {
+                detector.start();
+                sendLocalAdvertisement(motd, advertisedPort++);
+                boolean found = false;
+                long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(3);
+                while (!found && System.nanoTime() < deadline) {
+                    List<LanServer> dirty = cache.takeDirtyServers();
+                    found = dirty != null && dirty.stream().anyMatch(server -> motd.equals(server.getMotd()));
+                    if (!found) Thread.sleep(10);
+                }
+                require(found && detector.isAlive(), "the running detector accepts new local advertisements: " + motd);
+                detector.interrupt();
+                // Wake receive() so this test does not need the five-second
+                // vanilla timeout before it can inspect the stopped socket.
+                sendLocalAdvertisement("Stopping regression detector", 25567);
+                detector.join(2000);
+                require(!detector.isAlive() && socket.isClosed(),
+                        "vanilla removal stops its detector and releases its socket");
+            } finally {
+                detector.interrupt();
+                socket.close();
+                detector.join(1000);
+            }
+        }
+        System.out.println("VANILLA_DISCOVERY_RESTART_REGRESSION_OK sharedCache=retained newAdvertisements=received");
+    }
+
+    private static void sendLocalAdvertisement(String motd, int port) throws Exception {
+        byte[] data = ("[MOTD]" + motd + "[/MOTD][AD]" + port + "[/AD]").getBytes(StandardCharsets.UTF_8);
+        try (DatagramSocket sender = new DatagramSocket()) {
+            sender.send(new DatagramPacket(data, data.length, InetAddress.getByName("127.0.0.1"), 4445));
+        }
     }
 
     private static void equal(Object actual, Object expected, String message) {
