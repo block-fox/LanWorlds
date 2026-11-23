@@ -17,7 +17,8 @@ public record LanRoomSnapshot(
         long lastSeen,
         State state,
         Component statusComponent,
-        List<String> samplePlayers
+        List<String> samplePlayers,
+        String versionName, int protocol
 ) {
     public LanRoomSnapshot(UUID id, RoomKey key, String motd, String favicon, int players, int maxPlayers,
                            long latencyMs, long lastSeen, State state) {
@@ -29,7 +30,15 @@ public record LanRoomSnapshot(
         this(id, key, motd, statusMotd, favicon, players, maxPlayers, latencyMs, lastSeen, state, null, List.of());
     }
 
+    public LanRoomSnapshot(UUID id, RoomKey key, String motd, String statusMotd, String favicon, int players,
+                           int maxPlayers, long latencyMs, long lastSeen, State state,
+                           Component statusComponent, List<String> samplePlayers) {
+        this(id, key, motd, statusMotd, favicon, players, maxPlayers, latencyMs, lastSeen, state,
+                statusComponent, samplePlayers, "", -1);
+    }
+
     public LanRoomSnapshot {
+        versionName = versionName == null ? "" : versionName;
         samplePlayers = samplePlayers == null ? List.of() : List.copyOf(samplePlayers);
     }
 
@@ -37,6 +46,6 @@ public record LanRoomSnapshot(
     public String displayMotd() { return statusMotd == null || statusMotd.isBlank() ? motd : statusMotd; }
     public LanRoomSnapshot withState(State next) {
         return new LanRoomSnapshot(id, key, motd, statusMotd, favicon, players, maxPlayers, latencyMs, lastSeen, next,
-                statusComponent, samplePlayers);
+                statusComponent, samplePlayers, versionName, protocol);
     }
 }

@@ -13,6 +13,9 @@ import dev.lanworlds.room.LanRoomSelection;
 import dev.lanworlds.room.LanRoomSnapshot;
 import dev.lanworlds.room.LanRoomFaviconCache;
 import dev.lanworlds.room.RoomKey;
+import dev.lanworlds.room.LanRoomFolder;
+import dev.lanworlds.room.RoomBrowser;
+import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.Tooltip;
 import net.minecraft.client.gui.navigation.CommonInputs;
@@ -77,6 +80,19 @@ public abstract class MultiplayerScreenMixin extends Screen implements LanRoomSe
     private boolean lanworlds$entryMoved;
     private final LanRoomSelection lanworlds$roomSelection = new LanRoomSelection();
     private ToolbarButton lanworlds$multiSelectButton;
+    private ToolbarButton lanworlds$moreButton;
+    private final RoomBrowser lanworlds$browser = new RoomBrowser();
+    private List<LanServer> lanworlds$rooms = List.of();
+    private List<LanServer> lanworlds$results = List.of();
+    private String lanworlds$searchSignature = "";
+    private EditBox lanworlds$search;
+    private EditBox lanworlds$motdFilter;
+    private Button lanworlds$groupToggle;
+    private Button lanworlds$groupMode;
+    private Button lanworlds$searchMode;
+    private Button lanworlds$resultPage;
+    private final List<Button> lanworlds$resultButtons = new ArrayList<>();
+    private final List<AbstractWidget> lanworlds$flyout = new ArrayList<>();
     private Button lanworlds$selectAllButton;
     private Button lanworlds$invertButton;
     private Button lanworlds$clearSelectionButton;
@@ -131,7 +147,10 @@ public abstract class MultiplayerScreenMixin extends Screen implements LanRoomSe
     private List<LanServer> lanworlds$filterVanillaDiscovery(List<LanServer> detected) {
         // Vanilla replaces its rows when a new advertisement arrives, even if
         // our filtered signature did not change. Filter that update as well.
-        return lanworlds$filterDetectedServers(detected);
+        var combined = new ArrayList<>(detected);
+        combined.addAll(RadminIntegration.rooms());
+        lanworlds$lastLanSignature = "";
+        return lanworlds$displayRooms(lanworlds$filterDetectedServers(combined));
     }
 
     @Inject(method = "removed", at = @At("HEAD"))
@@ -147,6 +166,7 @@ public abstract class MultiplayerScreenMixin extends Screen implements LanRoomSe
         synchronized (lanServerList) {
             detected = new ArrayList<>(((LanServerListAccessor) lanServerList).lanworlds$getServers());
         }
+        detected.addAll(RadminIntegration.rooms());
         LanWorldsClient.ROOMS.syncVanillaServers(detected);
         List<LanServer> vanilla = lanworlds$filterDetectedServers(detected);
         Set<String> addresses = new HashSet<>();
@@ -162,22 +182,27 @@ public abstract class MultiplayerScreenMixin extends Screen implements LanRoomSe
                 vanilla.add(new LanServer(safeMotd, address));
             }
         }
+        lanworlds$rooms = List.copyOf(vanilla);
+        List<LanServer> rendered = lanworlds$displayRooms(vanilla);
         StringBuilder signature = new StringBuilder();
-        for (LanServer server : vanilla) {
+        for (LanServer server : rendered) {
             signature.append(server.getAddress()).append('\u0000').append(server.getMotd()).append('\u0001');
+            if (server instanceof LanRoomFolder folder) signature.append(folder.members()).append('\u0002');
         }
         String nextSignature = signature.toString();
         if (nextSignature.equals(lanworlds$lastLanSignature)) return;
         lanworlds$lastLanSignature = nextSignature;
-        serverSelectionList.updateNetworkServers(vanilla);
+        serverSelectionList.updateNetworkServers(rendered);
     }
 
     private List<LanServer> lanworlds$filterDetectedServers(List<LanServer> detected) {
-        List<LanServer> filtered = new ArrayList<>(detected);
-        // A malformed multicast advertisement must never reach ServerAddress.parseString.
-        filtered.removeIf(server -> server == null || !lanworlds$isValidAddress(server.getAddress())
-                || lanworlds$isBlocked(server.getAddress(), server.getMotd()));
-        return filtered;
+        Map<String, LanServer> unique = new LinkedHashMap<>();
+        for (LanServer server : detected) {
+            if (server == null || !lanworlds$isValidAddress(server.getAddress())
+                    || lanworlds$isBlocked(server.getAddress(), server.getMotd())) continue;
+            unique.putIfAbsent(lanworlds$normalizeAddress(server.getAddress()), server);
+        }
+        return new ArrayList<>(unique.values());
     }
 
     private static boolean lanworlds$isValidAddress(String address) {
@@ -236,13 +261,19 @@ public abstract class MultiplayerScreenMixin extends Screen implements LanRoomSe
                     lanworlds$roomSelection.setEnabled(!lanworlds$roomSelection.enabled());
                     lanworlds$updateRoomFooterActions();
                 });
-        lanworlds$entries.add(lanworlds$multiSelectButton);
+        lanworlds$moreButton = new ToolbarButton(ToolbarButton.Icon.MORE,
+                Component.translatable("screen.lanworlds.more"), () -> {
+                    lanworlds$browser.open = !lanworlds$browser.open;
+                    if (!lanworlds$browser.open && lanworlds$flyout.contains(getFocused())) setFocused(null);
+                    lanworlds$layoutFlyout();
+                });
+        lanworlds$entries.add(lanworlds$moreButton);
         lanworlds$entries.add(new ToolbarButton(ToolbarButton.Icon.SIGNAL, Component.translatable("screen.lanworlds.title"),
                 () -> minecraft.setScreen(new LanWorldsScreen(this))));
         var radmin = RadminIntegration.managementAction();
         if (radmin != null) {
             lanworlds$entries.add(new ToolbarButton(ToolbarButton.Icon.RADMIN,
-                    Component.translatable("screen.radminlan.title"), () -> radmin.accept(this)));
+                    RadminIntegration.managementLabel(), () -> radmin.accept(this)));
         }
         lanworlds$entries.forEach(this::addRenderableWidget);
         lanworlds$selectAllButton = addRenderableWidget(Button.builder(Component.translatable("screen.lanworlds.select_all"),
@@ -260,6 +291,7 @@ public abstract class MultiplayerScreenMixin extends Screen implements LanRoomSe
                     lanworlds$roomSelection.clear();
                     lanworlds$updateRoomFooterActions();
                 }).bounds(0, 34, 80, 20).build());
+        lanworlds$initFlyout();
         lanworlds$updateRoomFooterActions();
     }
 
@@ -288,7 +320,7 @@ public abstract class MultiplayerScreenMixin extends Screen implements LanRoomSe
         lanworlds$updateSelectionControls();
         if (lanworlds$roomDetailsButton == null || serverSelectionList == null) return;
         lanworlds$positionRoomFooterActions();
-        boolean selectedLan = serverSelectionList.getSelected() instanceof ServerSelectionList.NetworkServerEntry;
+        boolean selectedLan = lanworlds$selectedLanServer() != null;
         boolean multiple = lanworlds$roomSelection.enabled();
         int selectedCount = lanworlds$roomSelection.selectedAmong(lanworlds$visibleRoomKeys()).size();
         lanworlds$roomDetailsButton.visible = selectedLan || multiple;
@@ -299,7 +331,8 @@ public abstract class MultiplayerScreenMixin extends Screen implements LanRoomSe
         if (editButton != null) editButton.visible = !(selectedLan || multiple);
         if (deleteButton != null) deleteButton.visible = !(selectedLan || multiple);
         if (selectButton != null) selectButton.active = !multiple && serverSelectionList.getSelected() != null
-                && !(serverSelectionList.getSelected() instanceof ServerSelectionList.LANHeader);
+                && !(serverSelectionList.getSelected() instanceof ServerSelectionList.LANHeader)
+                && !lanworlds$isSelectedFolder();
     }
 
     private void lanworlds$updateSelectionControls() {
@@ -307,6 +340,7 @@ public abstract class MultiplayerScreenMixin extends Screen implements LanRoomSe
         boolean selecting = lanworlds$roomSelection.enabled();
         List<RoomKey> visible = lanworlds$visibleRoomKeys();
         int count = lanworlds$roomSelection.selectedAmong(visible).size();
+        lanworlds$multiSelectButton.appearance(ToolbarLayout.Style.ICON, selecting, 20);
         lanworlds$multiSelectButton.setMessage(Component.translatable(selecting ? "screen.lanworlds.single_select" : "screen.lanworlds.multi_select"));
         lanworlds$multiSelectButton.setTooltip(Tooltip.create(Component.translatable("screen.lanworlds.selected_count", count)
                 .append("\n").append(Component.translatable("screen.lanworlds.selection_hint"))));
@@ -332,6 +366,7 @@ public abstract class MultiplayerScreenMixin extends Screen implements LanRoomSe
     @Inject(method = "tick", at = @At("TAIL"))
     private void lanworlds$layoutEntries(CallbackInfo ci) {
         lanworlds$positionEntries();
+        lanworlds$layoutFlyout();
     }
 
     private void lanworlds$positionEntries() {
@@ -339,29 +374,34 @@ public abstract class MultiplayerScreenMixin extends Screen implements LanRoomSe
         if (config == null || lanworlds$entries.isEmpty()) return;
         var occupied = new ArrayList<ToolbarLayout.Rect>();
         int titleWidth = font.width(title);
-        occupied.add(new ToolbarLayout.Rect((width - titleWidth) / 2, 5, titleWidth, 22));
+        var titleBounds = new ToolbarLayout.Rect((width - titleWidth) / 2, 5, titleWidth, 22);
+        occupied.add(titleBounds);
         for (var child : children()) {
             if (child instanceof AbstractWidget widget && widget.visible
-                    && !(widget instanceof ServerSelectionList) && !lanworlds$entries.contains(widget)) {
+                    && !(widget instanceof ServerSelectionList) && !lanworlds$entries.contains(widget)
+                    && !lanworlds$flyout.contains(widget)) {
                 occupied.add(new ToolbarLayout.Rect(widget.getX(), widget.getY(), widget.getWidth(), widget.getHeight()));
             }
         }
-        for (ToolbarButton entry : lanworlds$entries) {
+        // Position the shield first so the other LanWorlds buttons can give it room.
+        for (ToolbarButton entry : lanworlds$entries.reversed()) {
             entry.appearance(config.toolbarStyle, lanworlds$roomSelection.enabled(), Math.max(20, (width - 24) / 2));
             if (entry == lanworlds$draggedEntry) continue;
             var saved = switch (entry.icon()) {
-                case SELECTION -> config.selectionButtonPosition;
+                case MORE, SELECTION -> config.selectionButtonPosition;
                 case SIGNAL -> config.lanWorldsButtonPosition;
                 case RADMIN -> config.radminButtonPosition;
             };
-            var anchor = switch (entry.icon()) {
-                case SELECTION -> config.selectionButtonAnchor;
-                case SIGNAL -> config.lanWorldsButtonAnchor;
-                case RADMIN -> config.radminButtonAnchor;
-            };
-            var position = config.canDragToolbar() && saved != null
-                    ? ToolbarLayout.restore(saved, entry.getWidth(), width, height)
-                    : ToolbarLayout.place(anchor, entry.getWidth(), width, height, occupied);
+            ToolbarLayout.Rect position;
+            if (config.canDragToolbar() && saved != null) {
+                position = ToolbarLayout.restore(saved, entry.getWidth(), width, height);
+            } else if (entry.icon() == ToolbarButton.Icon.RADMIN) {
+                position = ToolbarLayout.placeRadmin(config.radminButtonAnchor, titleBounds,
+                        entry.getWidth(), width, height, occupied);
+            } else {
+                var anchor = (entry.icon() == ToolbarButton.Icon.MORE || entry.icon() == ToolbarButton.Icon.SELECTION) ? config.selectionButtonAnchor : config.lanWorldsButtonAnchor;
+                position = ToolbarLayout.place(anchor, entry.getWidth(), width, height, occupied);
+            }
             entry.setX(position.x());
             entry.setY(position.y());
             occupied.add(position);
@@ -414,7 +454,7 @@ public abstract class MultiplayerScreenMixin extends Screen implements LanRoomSe
             var config = LanWorldsClient.CONFIG;
             var point = ToolbarLayout.save(new ToolbarLayout.Rect(entry.getX(), entry.getY(), entry.getWidth(), entry.getHeight()), width, height);
             switch (entry.icon()) {
-                case SELECTION -> config.selectionButtonPosition = point;
+                case MORE, SELECTION -> config.selectionButtonPosition = point;
                 case SIGNAL -> config.lanWorldsButtonPosition = point;
                 case RADMIN -> config.radminButtonPosition = point;
             }
@@ -427,7 +467,19 @@ public abstract class MultiplayerScreenMixin extends Screen implements LanRoomSe
     }
 
     @Override public boolean mouseClicked(double mouseX, double mouseY, int button) {
-        return lanworlds$pressEntry(mouseX, mouseY, button) || super.mouseClicked(mouseX, mouseY, button);
+        if (lanworlds$pressEntry(mouseX, mouseY, button)) return true;
+        if (lanworlds$browser.open) {
+            for (var widget : lanworlds$flyout.reversed()) {
+                if (widget.visible && widget.isMouseOver(mouseX, mouseY)) {
+                    if (widget.mouseClicked(mouseX, mouseY, button) && widget instanceof EditBox) setFocused(widget);
+                    return true;
+                }
+            }
+            if (lanworlds$flyout.contains(getFocused())) setFocused(null);
+            lanworlds$browser.open = false;
+            lanworlds$layoutFlyout();
+        }
+        return super.mouseClicked(mouseX, mouseY, button);
     }
 
     @Override public boolean mouseDragged(double mouseX, double mouseY, int button, double dragX, double dragY) {
@@ -445,12 +497,15 @@ public abstract class MultiplayerScreenMixin extends Screen implements LanRoomSe
     private Screen lanworlds$preserveSelectionOnRefresh(Screen replacement) {
         if (replacement instanceof LanRoomSelectionHost host) {
             host.lanworlds$roomSelection().copyFrom(lanworlds$roomSelection);
+            host.lanworlds$copyBrowser(this);
         }
         return replacement;
     }
 
     @Override public boolean lanworlds$selectRoom(RoomKey key, boolean shift, boolean control) {
-        List<RoomKey> visible = lanworlds$visibleRoomKeys();
+        List<RoomKey> visible = serverSelectionList.children().stream().filter(LanServerEntryDataAccessor.class::isInstance)
+                .map(LanServerEntryDataAccessor.class::cast).map(LanServerEntryDataAccessor::lanworlds$getServerData)
+                .filter(server -> !(server instanceof LanRoomFolder)).map(server -> RoomKey.fromAddress(server.getAddress())).toList();
         if (!lanworlds$roomSelection.enabled() && shift) {
             LanServer focused = lanworlds$selectedLanServer();
             RoomKey anchor = focused == null ? null : lanworlds$roomKey(focused.getAddress());
@@ -472,6 +527,20 @@ public abstract class MultiplayerScreenMixin extends Screen implements LanRoomSe
 
     @Inject(method = "keyPressed", at = @At("HEAD"), cancellable = true)
     private void lanworlds$selectionKeys(int keyCode, int scanCode, int modifiers, CallbackInfoReturnable<Boolean> cir) {
+        if (lanworlds$browser.open && keyCode == GLFW.GLFW_KEY_ESCAPE) {
+            lanworlds$browser.open = false;
+            if (lanworlds$flyout.contains(getFocused())) setFocused(null);
+            lanworlds$layoutFlyout();
+            cir.setReturnValue(true);
+            return;
+        }
+        if (getFocused() instanceof EditBox) return;
+        if (CommonInputs.selected(keyCode) && serverSelectionList.getSelected() instanceof LanServerEntryDataAccessor selected
+                && selected.lanworlds$getServerData() instanceof LanRoomFolder folder) {
+            lanworlds$activateFolder(folder, hasShiftDown());
+            cir.setReturnValue(true);
+            return;
+        }
         if (isSelectAll(keyCode) && !lanworlds$visibleRoomKeys().isEmpty()) {
             lanworlds$roomSelection.selectAll(lanworlds$visibleRoomKeys());
         } else if (lanworlds$roomSelection.enabled() && keyCode == GLFW.GLFW_KEY_ESCAPE) {
@@ -492,17 +561,13 @@ public abstract class MultiplayerScreenMixin extends Screen implements LanRoomSe
 
     @Inject(method = "join", at = @At("HEAD"), cancellable = true)
     private void lanworlds$preventJoiningWhileSelecting(ServerData server, CallbackInfo ci) {
-        if (lanworlds$roomSelection.enabled()) ci.cancel();
+        if (lanworlds$roomSelection.enabled() || lanworlds$isSelectedFolder()) ci.cancel();
     }
 
     private Map<RoomKey, LanServer> lanworlds$visibleRoomServers() {
         Map<RoomKey, LanServer> rooms = new LinkedHashMap<>();
-        if (serverSelectionList == null) return rooms;
-        for (ServerSelectionList.Entry entry : serverSelectionList.children()) {
-            if (!(entry instanceof ServerSelectionList.NetworkServerEntry)
-                    || !(entry instanceof LanServerEntryDataAccessor accessor)) continue;
-            LanServer server = accessor.lanworlds$getServerData();
-            RoomKey key = lanworlds$roomKey(server.getAddress());
+        for (LanServer server : lanworlds$rooms) {
+            RoomKey key = RoomKey.fromAddress(server.getAddress());
             if (key != null) rooms.putIfAbsent(key, server);
         }
         return rooms;
@@ -586,7 +651,236 @@ public abstract class MultiplayerScreenMixin extends Screen implements LanRoomSe
         var selected = serverSelectionList.getSelected();
         if (!(selected instanceof ServerSelectionList.NetworkServerEntry entry)
                 || !(entry instanceof LanServerEntryDataAccessor accessor)) return null;
-        return accessor.lanworlds$getServerData();
+        var server = accessor.lanworlds$getServerData();
+        return server instanceof LanRoomFolder ? null : server;
+    }
+
+    @Override public boolean lanworlds$folderCollapsed(String key) { return lanworlds$browser.collapsed.contains(key); }
+
+    @Override public void lanworlds$activateFolder(LanRoomFolder folder, boolean select) {
+        if (select && lanworlds$roomSelection.enabled()) {
+            if (lanworlds$roomSelection.selectedAmong(folder.members()).size() == folder.members().size()) {
+                lanworlds$roomSelection.remove(folder.members());
+            } else lanworlds$roomSelection.selectAll(folder.members());
+        } else {
+            if (!lanworlds$browser.collapsed.add(folder.key())) lanworlds$browser.collapsed.remove(folder.key());
+            lanworlds$refreshLanEntries();
+        }
+        lanworlds$updateRoomFooterActions();
+    }
+
+    @Override public void lanworlds$copyBrowser(LanRoomSelectionHost previous) {
+        if ((Object) previous instanceof JoinMultiplayerScreen) {
+            lanworlds$browser.copyFrom(previous.lanworlds$browserState());
+        }
+    }
+
+    @Override public RoomBrowser lanworlds$browserState() { return lanworlds$browser; }
+
+    private boolean lanworlds$isSelectedFolder() {
+        return serverSelectionList != null && serverSelectionList.getSelected() instanceof LanServerEntryDataAccessor selected
+                && selected.lanworlds$getServerData() instanceof LanRoomFolder;
+    }
+
+    private List<LanServer> lanworlds$displayRooms(List<LanServer> rooms) {
+        var config = LanWorldsClient.CONFIG;
+        if (config == null || !config.groupRooms) return rooms;
+        var mode = RoomBrowser.grouping(config.roomGrouping);
+        var groups = new LinkedHashMap<String, List<LanServer>>();
+        var coreAddresses = new HashSet<String>();
+        if (mode == RoomBrowser.Group.RADMIN) {
+            for (LanServer room : RadminIntegration.rooms()) coreAddresses.add(room.getAddress());
+        }
+        for (LanServer room : rooms) {
+            RoomKey key = RoomKey.fromAddress(room.getAddress());
+            if (key == null) continue;
+            var peer = mode == RoomBrowser.Group.RADMIN ? RadminIntegration.lookup(key.ip()) : null;
+            String group = RoomBrowser.group(mode, key, room.getMotd(), peer != null || coreAddresses.contains(room.getAddress()), config.motdGroupFilter);
+            groups.computeIfAbsent(group, ignored -> new ArrayList<>()).add(room);
+        }
+        List<LanServer> result = new ArrayList<>();
+        for (var group : groups.entrySet()) {
+            String id = mode.name() + ":" + group.getKey();
+            Component label = group.getKey().startsWith("screen.lanworlds.folder.")
+                    ? Component.translatable(group.getKey()) : Component.literal(group.getKey());
+            if (minecraft.options.hideServerAddress && (mode == RoomBrowser.Group.IP || mode == RoomBrowser.Group.PORT)) {
+                label = Component.translatable("selectServer.hiddenAddress");
+            }
+            result.add(new LanRoomFolder(id, label, group.getValue().stream()
+                    .map(room -> RoomKey.fromAddress(room.getAddress())).toList()));
+            if (!lanworlds$folderCollapsed(id)) result.addAll(group.getValue());
+        }
+        return result;
+    }
+
+    private void lanworlds$initFlyout() {
+        lanworlds$flyout.clear();
+        lanworlds$resultButtons.clear();
+        lanworlds$searchSignature = "";
+        lanworlds$flyout.add(addRenderableWidget(lanworlds$multiSelectButton));
+        lanworlds$groupToggle = lanworlds$flyoutButton(() -> {
+            var config = LanWorldsClient.CONFIG;
+            config.groupRooms = !config.groupRooms;
+            config.save();
+            lanworlds$refreshLanEntries();
+            lanworlds$layoutFlyout();
+        });
+        lanworlds$groupMode = lanworlds$flyoutButton(() -> {
+            var config = LanWorldsClient.CONFIG;
+            var values = RoomBrowser.Group.values();
+            config.roomGrouping = values[(RoomBrowser.grouping(config.roomGrouping).ordinal() + 1) % values.length].name();
+            config.save();
+            lanworlds$refreshLanEntries();
+            lanworlds$layoutFlyout();
+        });
+        lanworlds$searchMode = lanworlds$flyoutButton(() -> {
+            var values = RoomBrowser.Search.values();
+            lanworlds$browser.search = values[(lanworlds$browser.search.ordinal() + 1) % values.length];
+            lanworlds$browser.page = 0;
+            lanworlds$layoutFlyout();
+        });
+        lanworlds$search = addRenderableWidget(new EditBox(font, 0, 0, 80, 20,
+                Component.translatable("screen.lanworlds.room_search")));
+        lanworlds$search.setMaxLength(120);
+        lanworlds$search.setHint(Component.translatable("screen.lanworlds.room_search"));
+        lanworlds$search.setValue(lanworlds$browser.query);
+        lanworlds$search.setResponder(value -> {
+            lanworlds$browser.query = value;
+            lanworlds$browser.page = 0;
+            lanworlds$layoutFlyout();
+        });
+        lanworlds$flyout.add(lanworlds$search);
+        lanworlds$motdFilter = addRenderableWidget(new EditBox(font, 0, 0, 80, 20,
+                Component.translatable("screen.lanworlds.folder_filter")));
+        lanworlds$motdFilter.setMaxLength(100);
+        lanworlds$motdFilter.setHint(Component.translatable("screen.lanworlds.folder_filter"));
+        lanworlds$motdFilter.setValue(LanWorldsClient.CONFIG == null || LanWorldsClient.CONFIG.motdGroupFilter == null
+                ? "" : LanWorldsClient.CONFIG.motdGroupFilter);
+        lanworlds$motdFilter.setResponder(value -> {
+            if (LanWorldsClient.CONFIG == null) return;
+            LanWorldsClient.CONFIG.motdGroupFilter = value;
+            LanWorldsClient.CONFIG.save();
+            lanworlds$refreshLanEntries();
+        });
+        lanworlds$flyout.add(lanworlds$motdFilter);
+        for (int i = 0; i < 5; i++) {
+            final int slot = i;
+            lanworlds$resultButtons.add(lanworlds$flyoutButton(() -> {
+                int index = lanworlds$browser.page * lanworlds$resultsPerPage + slot;
+                if (index < lanworlds$results.size()) lanworlds$findRoom(lanworlds$results.get(index));
+            }));
+        }
+        lanworlds$resultPage = lanworlds$flyoutButton(() -> {
+            lanworlds$browser.page = (lanworlds$browser.page + 1) % ((lanworlds$results.size() - 1) / lanworlds$resultsPerPage + 1);
+            lanworlds$layoutFlyout();
+        });
+        lanworlds$layoutFlyout();
+    }
+
+    private Button lanworlds$flyoutButton(Runnable action) {
+        Button button = addRenderableWidget(Button.builder(Component.empty(), ignored -> action.run()).bounds(0, 0, 80, 20).build());
+        lanworlds$flyout.add(button);
+        return button;
+    }
+
+    private int lanworlds$resultsPerPage = 5;
+
+    private void lanworlds$layoutFlyout() {
+        if (lanworlds$search == null || lanworlds$moreButton == null || LanWorldsClient.CONFIG == null) return;
+        for (var widget : lanworlds$flyout) widget.visible = false;
+        if (!lanworlds$browser.open) return;
+        var config = LanWorldsClient.CONFIG;
+        boolean motd = config.groupRooms && RoomBrowser.grouping(config.roomGrouping) == RoomBrowser.Group.MOTD;
+        int w = Math.max(48, Math.min(244, width - 12));
+        int x = Math.clamp(lanworlds$moreButton.getX(), 4, Math.max(4, width - w - 4));
+        boolean up = height - lanworlds$moreButton.getY() - 20 < lanworlds$moreButton.getY();
+        int y = up ? lanworlds$moreButton.getY() - (motd ? 68 : 46) : lanworlds$moreButton.getY() + 24;
+        y = Math.clamp(y, 4, Math.max(4, height - (motd ? 68 : 46)));
+        int groupWidth = Math.max(9, (w - 28) / 2);
+        int controlsY = up ? y + (motd ? 44 : 22) : y;
+        lanworlds$place(lanworlds$multiSelectButton, x, controlsY, 20);
+        lanworlds$place(lanworlds$groupToggle, x + 24, controlsY, groupWidth);
+        lanworlds$place(lanworlds$groupMode, x + 28 + groupWidth, controlsY, w - 28 - groupWidth);
+        lanworlds$groupToggle.setMessage(Component.translatable(config.groupRooms ? "screen.lanworlds.folders_on" : "screen.lanworlds.folders_off"));
+        lanworlds$groupMode.setMessage(Component.translatable("screen.lanworlds.group." + RoomBrowser.grouping(config.roomGrouping).name().toLowerCase(Locale.ROOT)));
+        lanworlds$groupMode.active = config.groupRooms;
+        if (motd) lanworlds$place(lanworlds$motdFilter, x, y + 22, w);
+        int sy = up ? y : y + (motd ? 44 : 22);
+        int modeWidth = Math.min(75, Math.max(20, w / 3));
+        lanworlds$place(lanworlds$searchMode, x, sy, modeWidth);
+        lanworlds$searchMode.setMessage(Component.translatable("screen.lanworlds.search." + lanworlds$browser.search.name().toLowerCase(Locale.ROOT)));
+        lanworlds$place(lanworlds$search, x + modeWidth + 4, sy, Math.max(16, w - modeWidth - 4));
+        if (lanworlds$browser.query.isBlank()) return;
+        String signature = lanworlds$browser.query + "\n" + lanworlds$browser.search + "\n" + lanworlds$lastLanSignature;
+        if (!signature.equals(lanworlds$searchSignature) || lanworlds$browser.search == RoomBrowser.Search.USER
+                || lanworlds$browser.search == RoomBrowser.Search.ALL) {
+            lanworlds$searchSignature = signature;
+            lanworlds$results = lanworlds$rooms.stream().filter(this::lanworlds$matchesSearch).toList();
+        }
+        boolean aboveSearch = up;
+        int space = aboveSearch ? Math.max(0, sy - 4) : height - sy - 22;
+        int slots = Math.clamp(space / 21, 1, 6);
+        lanworlds$resultsPerPage = Math.max(1, Math.min(5, slots - (lanworlds$results.size() > slots ? 1 : 0)));
+        int pages = Math.max(1, (lanworlds$results.size() + lanworlds$resultsPerPage - 1) / lanworlds$resultsPerPage);
+        lanworlds$browser.page = Math.min(lanworlds$browser.page, pages - 1);
+        int available = Math.min(lanworlds$resultsPerPage, lanworlds$results.size() - lanworlds$browser.page * lanworlds$resultsPerPage);
+        int count = Math.max(1, available) + (pages > 1 ? 1 : 0);
+        int ry = aboveSearch ? Math.max(0, sy - count * 21 - 2) : sy + 22;
+        if (available == 0) {
+            var empty = lanworlds$resultButtons.getFirst();
+            empty.active = false;
+            empty.setMessage(Component.translatable("screen.lanworlds.no_search_results"));
+            lanworlds$place(empty, x + modeWidth + 4, ry, w - modeWidth - 4);
+            return;
+        }
+        for (int i = 0; i < available; i++) {
+            LanServer room = lanworlds$results.get(lanworlds$browser.page * lanworlds$resultsPerPage + i);
+            var button = lanworlds$resultButtons.get(i);
+            button.active = true;
+            String label = RoomBrowser.clean(room.getMotd());
+            if (label.isBlank()) label = minecraft.options.hideServerAddress ? Component.translatable("lanServer.title").getString() : room.getAddress();
+            button.setMessage(Component.literal(font.plainSubstrByWidth(label, Math.max(1, w - modeWidth - 15))));
+            lanworlds$place(button, x + modeWidth + 4, ry + 21 * i, w - modeWidth - 4);
+        }
+        if (pages > 1) {
+            lanworlds$resultPage.setMessage(Component.literal((lanworlds$browser.page + 1) + "/" + pages + "  >"));
+            lanworlds$place(lanworlds$resultPage, x + modeWidth + 4, ry + 21 * available, w - modeWidth - 4);
+        }
+    }
+
+    private void lanworlds$place(AbstractWidget widget, int x, int y, int width) {
+        widget.setX(x);
+        widget.setY(y);
+        widget.setWidth(Math.max(1, width));
+        widget.visible = true;
+    }
+
+    private boolean lanworlds$matchesSearch(LanServer room) {
+        RoomKey key = RoomKey.fromAddress(room.getAddress());
+        if (key == null) return false;
+        var mode = lanworlds$browser.search;
+        var peer = mode == RoomBrowser.Search.ALL || mode == RoomBrowser.Search.USER ? RadminIntegration.lookup(key.ip()) : null;
+        var status = LanWorldsClient.ROOMS == null ? null : LanWorldsClient.ROOMS.get(key);
+        return RoomBrowser.matches(mode, lanworlds$browser.query, key, room.getMotd(),
+                status == null ? "" : status.statusMotd(), peer == null ? "" : peer.name(), !minecraft.options.hideServerAddress);
+    }
+
+    private void lanworlds$findRoom(LanServer room) {
+        lanworlds$browser.collapsed.clear();
+        lanworlds$browser.open = false;
+        setFocused(null);
+        lanworlds$refreshLanEntries();
+        lanworlds$layoutFlyout();
+        var entries = serverSelectionList.children();
+        for (int i = 0; i < entries.size(); i++) {
+            var entry = entries.get(i);
+            if (entry instanceof LanServerEntryDataAccessor accessor
+                    && accessor.lanworlds$getServerData().getAddress().equals(room.getAddress())) {
+                serverSelectionList.setSelected(entry);
+                serverSelectionList.setScrollAmount(Math.max(0, i * 36 - serverSelectionList.getHeight() / 2));
+                break;
+            }
+        }
     }
 
     private static RoomKey lanworlds$roomKey(String address) {

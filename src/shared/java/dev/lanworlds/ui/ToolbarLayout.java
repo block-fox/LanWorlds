@@ -1,5 +1,7 @@
 package dev.lanworlds.ui;
 
+import com.google.gson.annotations.SerializedName;
+
 import java.util.List;
 
 /** Screen-space positions for the multiplayer entry buttons. */
@@ -9,6 +11,12 @@ public final class ToolbarLayout {
 
     public enum Style { ICON, TEXT, BOTH }
     public enum Anchor { AUTO, TOP_LEFT, TOP_RIGHT, BOTTOM_LEFT, BOTTOM_RIGHT }
+
+    public enum RadminAnchor {
+        @SerializedName(value = "TITLE_BEFORE", alternate = {"AUTO", "TOP_LEFT"}) TITLE_BEFORE,
+        @SerializedName(value = "TITLE_AFTER", alternate = "TOP_RIGHT") TITLE_AFTER,
+        BOTTOM_LEFT, BOTTOM_RIGHT
+    }
 
     public record Point(double x, double y) {
         public Point {
@@ -41,6 +49,37 @@ public final class ToolbarLayout {
                 (int) Math.round(point.y * (screenHeight - SIZE)), width, screenWidth, screenHeight);
     }
 
+    public static Rect placeRadmin(RadminAnchor anchor, Rect title, int width, int screenWidth,
+                                   int screenHeight, List<Rect> occupied) {
+        if (anchor == RadminAnchor.BOTTOM_LEFT || anchor == RadminAnchor.BOTTOM_RIGHT) {
+            return place(anchor == RadminAnchor.BOTTOM_LEFT ? Anchor.BOTTOM_LEFT : Anchor.BOTTOM_RIGHT,
+                    width, screenWidth, screenHeight, occupied);
+        }
+        boolean left = anchor == RadminAnchor.TITLE_BEFORE;
+        int edge = left ? title.x - GAP - width : title.x + title.width + GAP;
+        int oppositeEdge = left ? title.x + title.width + GAP : title.x - GAP - width;
+        Rect preferred = findBesideTitle(edge, left ? -1 : 1, width, screenWidth, screenHeight, occupied);
+        if (preferred != null) return preferred;
+        Rect opposite = findBesideTitle(oppositeEdge, left ? 1 : -1, width, screenWidth, screenHeight, occupied);
+        if (opposite != null) return opposite;
+        return place(left ? Anchor.TOP_LEFT : Anchor.TOP_RIGHT, width, screenWidth, screenHeight, occupied);
+    }
+
+    private static Rect findBesideTitle(int x, int direction, int width, int screenWidth, int screenHeight,
+                                        List<Rect> occupied) {
+        for (; x >= GAP && x + width <= screenWidth - GAP; x += direction) {
+            Rect candidate = onScreen(x, 6, width, screenWidth, screenHeight);
+            if (fits(candidate, occupied)) return candidate;
+        }
+        return null;
+    }
+
+    private static boolean fits(Rect candidate, List<Rect> occupied) {
+        Rect padded = new Rect(candidate.x - GAP, candidate.y - GAP,
+                candidate.width + 2 * GAP, candidate.height + 2 * GAP);
+        return occupied.stream().noneMatch(padded::overlaps);
+    }
+
     public static Rect place(Anchor anchor, int width, int screenWidth, int screenHeight, List<Rect> occupied) {
         int maxX = Math.max(0, screenWidth - width - GAP);
         int maxY = Math.max(0, screenHeight - SIZE - GAP);
@@ -52,8 +91,7 @@ public final class ToolbarLayout {
             for (int offset = 0; offset <= maxX; offset++) {
                 int x = right ? maxX - offset : GAP + offset;
                 Rect candidate = onScreen(x, y, width, screenWidth, screenHeight);
-                Rect padded = new Rect(candidate.x - GAP, candidate.y - GAP, width + 2 * GAP, SIZE + 2 * GAP);
-                if (occupied.stream().noneMatch(padded::overlaps)) return candidate;
+                if (fits(candidate, occupied)) return candidate;
             }
         }
         return preferred;

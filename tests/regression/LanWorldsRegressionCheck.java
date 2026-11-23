@@ -42,6 +42,8 @@ public final class LanWorldsRegressionCheck {
         checkOptionalIntegration();
         checkRoomMatching();
         checkRepositoryShutdown();
+        checkEmbeddedRoomStatus();
+        checkLegacyStatus();
         checkVanillaDiscoveryRestart();
         System.out.println("LANWORLDS_REGRESSION_OK Minecraft=" + minecraftVersion);
     }
@@ -292,6 +294,122 @@ public final class LanWorldsRegressionCheck {
             repository.close();
         }
         System.out.println("REPOSITORY_SHUTDOWN_REGRESSION_OK pendingSocket=closed lateDiscovery=ignored");
+    }
+
+    private static void checkEmbeddedRoomStatus() throws Exception {
+        var share = FabricLoader.getInstance().getObjectShare();
+        var name = "radminlan:lan-rooms-v1";
+        var route = "radminlan:status-route-v1";
+        var closed = new CountDownLatch(1);
+        var config = new LanWorldsConfig();
+        config.queryTimeoutMs = 1000;
+        try (var listener = new ServerSocket(0, 1, InetAddress.getLoopbackAddress());
+             var rooms = new LanRoomRepository(config)) {
+            share.put(name, (java.util.function.Supplier<List<Map<String, Object>>>) () -> List.of(
+                    Map.of("motd", "VPN world", "host", "26.11.12.13", "port", 25565)));
+            share.put(route, (Function<java.net.InetSocketAddress, Map.Entry<java.net.InetSocketAddress, AutoCloseable>>) target -> {
+                require(target.isUnresolved() && target.getHostString().equals("26.11.12.13"), "VPN host preserved for routing");
+                return Map.entry((java.net.InetSocketAddress) listener.getLocalSocketAddress(), closed::countDown);
+            });
+            var served = java.util.concurrent.CompletableFuture.runAsync(() -> {
+                try (var socket = listener.accept()) {
+                    socket.setSoTimeout(3000);
+                    var in = new java.io.DataInputStream(socket.getInputStream());
+                    var out = new java.io.DataOutputStream(socket.getOutputStream());
+                    in.skipNBytes(readVarInt(in));
+                    in.skipNBytes(readVarInt(in));
+                    byte[] json = "{\"version\":{\"name\":\"Test VPN server\",\"protocol\":777},\"players\":{\"online\":2,\"max\":12},\"description\":\"Hello\"}".getBytes(StandardCharsets.UTF_8);
+                    var frame = new java.io.ByteArrayOutputStream();
+                    frame.write(0);
+                    writeVarInt(frame, json.length);
+                    frame.write(json);
+                    writeVarInt(out, frame.size());
+                    frame.writeTo(out);
+                    out.flush();
+                    equal(readVarInt(in), 9, "ping size");
+                    equal(in.readUnsignedByte(), 1, "ping packet id");
+                    out.writeByte(9);
+                    out.writeByte(1);
+                    out.writeLong(in.readLong());
+                    out.flush();
+                } catch (Exception error) { throw new RuntimeException(error); }
+            });
+            rooms.syncVanillaServers(RadminIntegration.rooms());
+            require(closed.await(4, TimeUnit.SECONDS), "status route lease closed");
+            served.get(4, TimeUnit.SECONDS);
+            var key = RoomKey.fromAddress("26.11.12.13:25565");
+            var room = rooms.get(key);
+            require(room != null && room.protocol() == 777 && room.players() == 2 && room.latencyMs() >= 0,
+                    "the routed status exchange includes version, count and ping");
+            share.remove(name);
+            rooms.syncVanillaServers(RadminIntegration.rooms());
+            require(rooms.get(key) == null, "expired embedded advertisements leave the room list");
+        } finally {
+            share.remove(name);
+            share.remove(route);
+        }
+        System.out.println("EMBEDDED_ROOM_STATUS_REGRESSION_OK");
+    }
+
+    private static void checkLegacyStatus() throws Exception {
+        try (var listener = new ServerSocket(0, 2, InetAddress.getLoopbackAddress());
+             var rooms = new LanRoomRepository(new LanWorldsConfig())) {
+            listener.setSoTimeout(3000);
+            var served = java.util.concurrent.CompletableFuture.runAsync(() -> {
+                try {
+                    try (var modern = listener.accept()) {
+                        modern.setSoTimeout(3000);
+                        var in = new java.io.DataInputStream(modern.getInputStream());
+                        in.skipNBytes(readVarInt(in));
+                        in.skipNBytes(readVarInt(in));
+                    }
+                    try (var legacy = listener.accept()) {
+                        legacy.setSoTimeout(3000);
+                        var in = new java.io.DataInputStream(legacy.getInputStream());
+                        var out = new java.io.DataOutputStream(legacy.getOutputStream());
+                        equal(in.readUnsignedByte(), 0xFE, "legacy query id");
+                        equal(in.readUnsignedByte(), 1, "legacy query version");
+                        equal(in.readUnsignedByte(), 0xFA, "legacy plugin message");
+                        in.skipNBytes(in.readUnsignedShort() * 2L);
+                        in.skipNBytes(in.readUnsignedShort());
+                        String reply = String.join(String.valueOf((char) 0), "§1", "78", "1.6.4", "Classic LAN", "3", "16");
+                        out.writeByte(0xFF);
+                        out.writeShort(reply.length());
+                        out.writeChars(reply);
+                        out.flush();
+                    }
+                } catch (Exception error) { throw new RuntimeException(error); }
+            });
+            String address = "127.0.0.1:" + listener.getLocalPort();
+            rooms.syncVanillaServers(List.of(new LanServer("Legacy", address)));
+            served.get(4, TimeUnit.SECONDS);
+            var key = RoomKey.fromAddress(address);
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+            while (rooms.get(key).state() == dev.lanworlds.room.LanRoomSnapshot.State.QUERYING
+                    && System.nanoTime() < deadline) Thread.sleep(10);
+            var room = rooms.get(key);
+            require(room.protocol() == 78 && room.versionName().equals("1.6.4") && room.players() == 3,
+                    "legacy response reported the version and player count");
+        }
+        System.out.println("LEGACY_ROOM_STATUS_REGRESSION_OK");
+    }
+
+    private static void writeVarInt(java.io.OutputStream out, int value) throws java.io.IOException {
+        while ((value & ~0x7F) != 0) {
+            out.write((value & 0x7F) | 0x80);
+            value >>>= 7;
+        }
+        out.write(value);
+    }
+
+    private static int readVarInt(java.io.DataInputStream in) throws java.io.IOException {
+        int value = 0;
+        for (int shift = 0; shift < 35; shift += 7) {
+            int next = in.readUnsignedByte();
+            value |= (next & 0x7F) << shift;
+            if ((next & 0x80) == 0) return value;
+        }
+        throw new java.io.IOException("Invalid status frame size");
     }
 
     private static void checkVanillaDiscoveryRestart() throws Exception {

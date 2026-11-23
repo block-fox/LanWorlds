@@ -33,6 +33,7 @@
     "fabricloader": ">=0.19.5"
   },
   "suggests": {
+    "radminlinker": ">=1.0.1",
     "radminlan": ">=0.3.0",
     "modmenu": "*"
   },

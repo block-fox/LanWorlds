@@ -39,7 +39,9 @@ public final class LanWorlds1211Smoke implements ClientModInitializer {
                 client.setScreen(screen);
                 list.updateNetworkServers(List.of(alpha, beta));
 
+                clickButton(screen, Component.translatable("screen.lanworlds.more").getString());
                 clickButton(screen, Component.translatable("screen.lanworlds.multi_select").getString());
+                clickButton(screen, Component.translatable("screen.lanworlds.more").getString());
                 int x = list.getRowLeft() + 10;
                 int firstY = list.getY() + 4 + 36 + 7;
                 require(screen.mouseClicked(x, firstY, GLFW.GLFW_MOUSE_BUTTON_LEFT), "room click was not consumed");

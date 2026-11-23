@@ -1,6 +1,7 @@
 package dev.lanworlds.integration;
 
 import net.fabricmc.loader.api.FabricLoader;
+import net.minecraft.network.chat.Component;
 import net.minecraft.client.gui.screens.Screen;
 
 import java.util.ArrayList;
@@ -17,23 +18,59 @@ public final class RadminIntegration {
 
     private RadminIntegration() {}
 
+    private static Object provider(String legacyKey) {
+        var share = FabricLoader.getInstance().getObjectShare();
+        Object current = share.get(legacyKey.replace("radminlan:", "radminlinker:"));
+        return current == null ? share.get(legacyKey) : current;
+    }
+
+    public static Component managementLabel() {
+        return Component.translatable(FabricLoader.getInstance().isModLoaded("radminlinker")
+                ? "screen.radminlinker.title" : "screen.radminlan.title");
+    }
+
     public static void registerToolbar() {
         FabricLoader.getInstance().getObjectShare().put("lanworlds:manages-radmin-entry-v1", true);
     }
 
     @SuppressWarnings("unchecked")
     public static Consumer<Screen> managementAction() {
-        Object action = FabricLoader.getInstance().getObjectShare().get(MANAGEMENT_KEY);
+        Object action = provider(MANAGEMENT_KEY);
         return action instanceof Consumer<?> consumer ? (Consumer<Screen>) consumer : null;
     }
 
+    public static List<net.minecraft.client.server.LanServer> rooms() {
+        Object provider = provider("radminlan:lan-rooms-v1");
+        if (!(provider instanceof java.util.function.Supplier<?> source) || !(source.get() instanceof List<?> rows)) return List.of();
+        var rooms = new ArrayList<net.minecraft.client.server.LanServer>();
+        for (Object row : rows) {
+            if (row instanceof Map<?, ?> map && map.get("motd") instanceof String motd
+                    && map.get("host") instanceof String host && map.get("port") instanceof Integer port
+                    && host.matches("26(?:\\.[0-9]{1,3}){3}") && port > 0 && port <= 65535) {
+                rooms.add(new net.minecraft.client.server.LanServer(motd, host + ":" + port));
+            }
+        }
+        return rooms;
+    }
+
+    @SuppressWarnings("unchecked")
+    public static Map.Entry<java.net.InetSocketAddress, AutoCloseable> routeStatus(java.net.InetSocketAddress destination) {
+        Object provider = provider("radminlan:status-route-v1");
+        if (provider instanceof Function<?, ?> fn) {
+            Object route = ((Function<java.net.InetSocketAddress, ?>) fn).apply(destination);
+            if (route instanceof Map.Entry<?, ?> entry && entry.getKey() instanceof java.net.InetSocketAddress endpoint
+                    && entry.getValue() instanceof AutoCloseable lease) return Map.entry(endpoint, lease);
+        }
+        return Map.entry(destination, () -> {});
+    }
+
     public static boolean available() {
-        return FabricLoader.getInstance().getObjectShare().get(PROVIDER_KEY) instanceof Function<?, ?>;
+        return provider(PROVIDER_KEY) instanceof Function<?, ?>;
     }
 
     public static RoomInfo lookup(String ip) {
         if (ip == null || ip.isBlank()) return null;
-        Object provider = FabricLoader.getInstance().getObjectShare().get(PROVIDER_KEY);
+        Object provider = provider(PROVIDER_KEY);
         if (!(provider instanceof Function<?, ?> function)) return null;
         try {
             @SuppressWarnings("unchecked")

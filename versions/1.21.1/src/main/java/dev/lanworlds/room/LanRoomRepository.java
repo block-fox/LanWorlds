@@ -1,7 +1,8 @@
 package dev.lanworlds.room;
 
 import dev.lanworlds.config.LanWorldsConfig;
-import net.minecraft.SharedConstants;
+import dev.lanworlds.integration.RadminIntegration;
+import dev.lanworlds.integration.ServerProtocol;
 import net.minecraft.client.server.LanServer;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.ComponentSerialization;
@@ -84,7 +85,7 @@ public final class LanRoomRepository implements AutoCloseable {
                 } else if (!motd.equals(previous.motd())) {
                     current = new LanRoomSnapshot(previous.id(), key, motd, previous.statusMotd(), previous.favicon(),
                             previous.players(), previous.maxPlayers(), previous.latencyMs(), now, previous.state(),
-                            previous.statusComponent(), previous.samplePlayers());
+                            previous.statusComponent(), previous.samplePlayers(), previous.versionName(), previous.protocol());
                     rooms.put(key, current);
                 } else {
                     current = previous;
@@ -121,67 +122,162 @@ public final class LanRoomRepository implements AutoCloseable {
     }
 
     private void queryStatus(RoomKey key, String fallbackMotd, UUID roomId) {
-        long started = System.nanoTime();
+        if (queryModernStatus(key, roomId) || queryLegacyStatus(key, roomId)) return;
+        synchronized (this) {
+            LanRoomSnapshot old = rooms.get(key);
+            if (!closed && old != null && old.id().equals(roomId)) {
+                rooms.put(key, new LanRoomSnapshot(old.id(), key, fallbackMotd, "", "", -1, -1, -1,
+                        System.currentTimeMillis(), LanRoomSnapshot.State.TIMED_OUT));
+            }
+        }
+    }
+
+    private boolean queryModernStatus(RoomKey key, UUID roomId) {
         Socket socket = new Socket();
         synchronized (this) {
             if (closed) {
                 closeSocket(socket);
-                return;
+                return false;
             }
             activeSockets.add(socket);
         }
         try (socket) {
-            int timeout = Math.max(100, Math.min(10_000, config.queryTimeoutMs));
-            socket.connect(new java.net.InetSocketAddress(key.ip(), key.port()), timeout);
-            socket.setSoTimeout(timeout);
-            DataOutputStream out = new DataOutputStream(socket.getOutputStream());
-            DataInputStream in = new DataInputStream(socket.getInputStream());
-            ByteArrayOutputStream handshake = new ByteArrayOutputStream();
-            DataOutputStream h = new DataOutputStream(handshake);
-            writeVarInt(h, 0x00);
-            writeVarInt(h, SharedConstants.getCurrentVersion().getProtocolVersion());
-            writeString(h, key.ip());
-            h.writeShort(key.port());
-            writeVarInt(h, 1);
-            writePacket(out, handshake.toByteArray());
-            ByteArrayOutputStream request = new ByteArrayOutputStream();
-            DataOutputStream r = new DataOutputStream(request);
-            writeVarInt(r, 0x00);
-            writePacket(out, request.toByteArray());
-            int packetLength = readVarInt(in);
-            if (packetLength <= 0 || packetLength > MAX_STATUS_BYTES) throw new IOException("Invalid status packet length");
-            int packetId = readVarInt(in);
-            if (packetId != 0) throw new IOException("Unexpected status packet id");
-            String json = readString(in);
-            JsonObject root = JsonParser.parseString(json).getAsJsonObject();
-            int online = root.has("players") && root.getAsJsonObject("players").has("online") ? root.getAsJsonObject("players").get("online").getAsInt() : -1;
-            int max = root.has("players") && root.getAsJsonObject("players").has("max") ? root.getAsJsonObject("players").get("max").getAsInt() : -1;
-            Component statusComponent = component(root.get("description"));
-            String statusMotd = statusComponent == null ? "" : statusComponent.getString();
-            List<String> samplePlayers = parseSamplePlayers(root);
-            String favicon = root.has("favicon") && root.get("favicon").isJsonPrimitive()
-                    ? root.get("favicon").getAsString() : "";
-            long latency = (System.nanoTime() - started) / 1_000_000L;
-            synchronized (this) {
-                LanRoomSnapshot old = rooms.get(key);
-                if (!closed && old != null && old.id().equals(roomId)) rooms.put(key, new LanRoomSnapshot(old.id(), key, old.motd(),
-                        statusMotd.isBlank() ? old.statusMotd() : statusMotd,
-                        favicon.isBlank() ? old.favicon() : favicon, online, max, latency,
-                        System.currentTimeMillis(), LanRoomSnapshot.State.READY,
-                        statusComponent == null ? old.statusComponent() : statusComponent,
-                        samplePlayers));
+            var route = RadminIntegration.routeStatus(java.net.InetSocketAddress.createUnresolved(key.ip(), key.port()));
+            try (var lease = route.getValue()) {
+                int timeout = Math.max(100, Math.min(10_000, config.queryTimeoutMs));
+                var endpoint = route.getKey();
+                socket.connect(endpoint.isUnresolved() ? new java.net.InetSocketAddress(endpoint.getHostString(), endpoint.getPort()) : endpoint, timeout);
+                socket.setSoTimeout(timeout);
+                DataOutputStream out = new DataOutputStream(socket.getOutputStream());
+                DataInputStream in = new DataInputStream(socket.getInputStream());
+                ByteArrayOutputStream handshake = new ByteArrayOutputStream();
+                DataOutputStream h = new DataOutputStream(handshake);
+                writeVarInt(h, 0x00);
+                writeVarInt(h, ServerProtocol.target().id());
+                writeString(h, key.ip());
+                h.writeShort(key.port());
+                writeVarInt(h, 1);
+                writePacket(out, handshake.toByteArray());
+                ByteArrayOutputStream request = new ByteArrayOutputStream();
+                DataOutputStream r = new DataOutputStream(request);
+                writeVarInt(r, 0x00);
+                writePacket(out, request.toByteArray());
+                int packetLength = readVarInt(in);
+                if (packetLength <= 0 || packetLength > MAX_STATUS_BYTES) throw new IOException("Invalid status packet length");
+                byte[] payload = in.readNBytes(packetLength);
+                if (payload.length != packetLength) throw new IOException("Truncated status packet");
+                var statusPacket = new DataInputStream(new java.io.ByteArrayInputStream(payload));
+                if (readVarInt(statusPacket) != 0) throw new IOException("Unexpected status packet id");
+                String json = readString(statusPacket);
+                JsonObject root = JsonParser.parseString(json).getAsJsonObject();
+                JsonObject version = root.get("version") instanceof JsonObject data ? data : new JsonObject();
+                String versionName = version.has("name") ? version.get("name").getAsString() : "";
+                int protocol = version.has("protocol") ? version.get("protocol").getAsInt() : -1;
+                int online = root.has("players") && root.getAsJsonObject("players").has("online") ? root.getAsJsonObject("players").get("online").getAsInt() : -1;
+                int max = root.has("players") && root.getAsJsonObject("players").has("max") ? root.getAsJsonObject("players").get("max").getAsInt() : -1;
+                Component statusComponent = component(root.get("description"));
+                String statusMotd = statusComponent == null ? "" : statusComponent.getString();
+                List<String> samplePlayers = parseSamplePlayers(root);
+                String favicon = root.has("favicon") && root.get("favicon").isJsonPrimitive()
+                        ? root.get("favicon").getAsString() : "";
+                long latency = measurePing(socket, in, out, timeout);
+                synchronized (this) {
+                    LanRoomSnapshot old = rooms.get(key);
+                    if (!closed && old != null && old.id().equals(roomId)) rooms.put(key, new LanRoomSnapshot(old.id(), key, old.motd(),
+                            statusMotd.isBlank() ? old.statusMotd() : statusMotd,
+                            favicon, online, max, latency,
+                            System.currentTimeMillis(), LanRoomSnapshot.State.READY,
+                            statusComponent == null ? old.statusComponent() : statusComponent,
+                            samplePlayers, versionName, protocol));
+                }
+                return true;
             }
         } catch (Exception ignored) {
-            synchronized (this) {
-                LanRoomSnapshot old = rooms.get(key);
-                if (!closed && old != null && old.id().equals(roomId)) rooms.put(key, new LanRoomSnapshot(old.id(), key, fallbackMotd,
-                        old.statusMotd(), old.favicon(), old.players(), old.maxPlayers(), old.latencyMs(),
-                        System.currentTimeMillis(), LanRoomSnapshot.State.TIMED_OUT, old.statusComponent(), old.samplePlayers()));
-            }
+            return false;
         } finally {
             synchronized (this) {
                 activeSockets.remove(socket);
             }
+        }
+    }
+
+    private boolean queryLegacyStatus(RoomKey key, UUID roomId) {
+        Socket socket = new Socket();
+        synchronized (this) {
+            LanRoomSnapshot current = rooms.get(key);
+            if (closed || current == null || !current.id().equals(roomId)) {
+                closeSocket(socket);
+                return false;
+            }
+            activeSockets.add(socket);
+        }
+        try (socket) {
+            var route = RadminIntegration.routeStatus(java.net.InetSocketAddress.createUnresolved(key.ip(), key.port()));
+            try (var lease = route.getValue()) {
+                int timeout = Math.clamp(config.queryTimeoutMs, 100, 750);
+                var endpoint = route.getKey();
+                socket.connect(endpoint.isUnresolved()
+                        ? new java.net.InetSocketAddress(endpoint.getHostString(), endpoint.getPort()) : endpoint, timeout);
+                socket.setSoTimeout(timeout);
+                DataOutputStream out = new DataOutputStream(socket.getOutputStream());
+                DataInputStream in = new DataInputStream(socket.getInputStream());
+                long sent = System.nanoTime();
+                out.writeByte(0xFE);
+                out.writeByte(1);
+                out.writeByte(0xFA);
+                writeLegacyString(out, "MC|PingHost");
+                out.writeShort(7 + 2 * key.ip().length());
+                out.writeByte(127);
+                writeLegacyString(out, key.ip());
+                out.writeInt(key.port());
+                out.flush();
+                if (in.readUnsignedByte() != 0xFF) return false;
+                int chars = in.readUnsignedShort();
+                if (chars == 0 || chars > 4096) return false;
+                byte[] payload = in.readNBytes(chars * 2);
+                if (payload.length != chars * 2) return false;
+                String[] fields = new String(payload, StandardCharsets.UTF_16BE).split(String.valueOf((char) 0), 6);
+                if (fields.length != 6 || !fields[0].equals("§1")) return false;
+                int protocol = Integer.parseInt(fields[1]);
+                int online = Integer.parseInt(fields[4]);
+                int max = Integer.parseInt(fields[5]);
+                if (protocol < 0 || online < 0 || max < 0) return false;
+                synchronized (this) {
+                    LanRoomSnapshot old = rooms.get(key);
+                    if (!closed && old != null && old.id().equals(roomId)) {
+                        long millis = java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - sent);
+                        rooms.put(key, new LanRoomSnapshot(old.id(), key, old.motd(), fields[3], "", online, max,
+                                millis, System.currentTimeMillis(), LanRoomSnapshot.State.READY,
+                                Component.literal(fields[3]), List.of(), fields[2], protocol));
+                    }
+                }
+                return true;
+            }
+        } catch (Exception ignored) {
+            return false;
+        } finally {
+            synchronized (this) { activeSockets.remove(socket); }
+        }
+    }
+
+    private static void writeLegacyString(DataOutputStream out, String value) throws IOException {
+        out.writeShort(value.length());
+        out.writeChars(value);
+    }
+
+    private static long measurePing(Socket socket, DataInputStream in, DataOutputStream out, int timeout) {
+        try {
+            socket.setSoTimeout(Math.min(timeout, 2_000));
+            long sent = System.nanoTime();
+            ByteArrayOutputStream packet = new ByteArrayOutputStream(9);
+            DataOutputStream ping = new DataOutputStream(packet);
+            writeVarInt(ping, 1);
+            ping.writeLong(sent);
+            writePacket(out, packet.toByteArray());
+            if (readVarInt(in) != 9 || readVarInt(in) != 1 || in.readLong() != sent) return -1;
+            return java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - sent);
+        } catch (IOException ignored) {
+            return -1;
         }
     }
 
@@ -235,6 +331,7 @@ public final class LanRoomRepository implements AutoCloseable {
 
     private static Component component(JsonElement json) {
         if (json == null || json.isJsonNull()) return null;
+        if (json.isJsonPrimitive() && json.getAsJsonPrimitive().isString()) return Component.literal(json.getAsString());
         return ComponentSerialization.CODEC.parse(JsonOps.INSTANCE, json)
                 .result()
                 .orElse(null);

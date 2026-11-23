@@ -10,9 +10,14 @@ import net.minecraft.resources.Identifier;
 
 /** A vanilla button surface with a compact multiplayer icon. */
 public final class ToolbarButton extends Button.Plain {
-    public enum Icon { SELECTION, SIGNAL, RADMIN }
+    public enum Icon { SELECTION, SIGNAL, RADMIN, MORE }
 
     private static final Identifier SHIELD = Identifier.fromNamespaceAndPath("radminlan", "textures/radmin_pixel.png");
+    private static final Identifier LINKER_SHIELD = Identifier.fromNamespaceAndPath("radminlinker", "textures/radmin_pixel.png");
+
+    private static Identifier shield() {
+        return net.fabricmc.loader.api.FabricLoader.getInstance().isModLoaded("radminlinker") ? LINKER_SHIELD : SHIELD;
+    }
     private final Icon icon;
     private final Runnable action;
     private ToolbarLayout.Style style = ToolbarLayout.Style.ICON;
@@ -57,27 +62,10 @@ public final class ToolbarButton extends Button.Plain {
 
     private void drawIcon(GuiGraphics graphics, int x, int y) {
         switch (icon) {
-            case RADMIN -> graphics.blit(RenderPipelines.GUI_TEXTURED, SHIELD, x, y, 0, 0, 16, 16, 16, 16, 16, 16);
-            case SIGNAL -> {
-                for (int bar = 0; bar < 4; bar++) {
-                    int left = x + 1 + 4 * bar;
-                    int top = y + 11 - 3 * bar;
-                    graphics.fill(left + 1, top + 1, left + 4, y + 15, 0xFF135620);
-                    graphics.fill(left, top, left + 2, y + 14, 0xFF56F661);
-                }
-            }
-            case SELECTION -> {
-                graphics.fill(x + 1, y + 1, x + 15, y + 15, 0xFFE0E0E0);
-                graphics.fill(x + 2, y + 2, x + 14, y + 14, selected ? 0xFF244F38 : 0xFF363636);
-                if (selected) {
-                    for (int step = 0; step < 3; step++) {
-                        graphics.fill(x + 4 + step, y + 7 + step, x + 6 + step, y + 9 + step, 0xFF9DFF9D);
-                    }
-                    for (int step = 0; step < 6; step++) {
-                        graphics.fill(x + 6 + step, y + 9 - step, x + 8 + step, y + 11 - step, 0xFF9DFF9D);
-                    }
-                }
-            }
+            case RADMIN -> graphics.blit(RenderPipelines.GUI_TEXTURED, shield(), x, y, 0, 0, 16, 16, 16, 16, 16, 16);
+            case SIGNAL -> UiSprites.draw(graphics, UiSprites.Art.BEACON, x, y, 16);
+            case MORE -> graphics.drawString(Minecraft.getInstance().font, "…", x + 5, y + 4, 0xFFFFFFFF);
+            case SELECTION -> UiSprites.checkbox(graphics, selected, x, y, 16);
         }
     }
 }

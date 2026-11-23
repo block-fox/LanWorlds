@@ -32,6 +32,7 @@ public final class LanWorldsScreen extends Screen {
     private static final int SETTING_HEIGHT = 80;
     private static final String[] SETTING_LABELS = {"toolbar_style", "toolbar_drag", "selection_position",
             "lanworlds_position", "radmin_position", "query", "timeout", "block_type"};
+    private static final int ROOM_SETTINGS_START = 5;
     private static final Identifier SCROLLER = Identifier.withDefaultNamespace("widget/scroller");
     private static final Identifier SCROLLER_BACKGROUND = Identifier.withDefaultNamespace("widget/scroller_background");
 
@@ -66,12 +67,11 @@ public final class LanWorldsScreen extends Screen {
         controls.clear();
         rules.clear();
         draggingScrollbar = false;
-        int tabWidth = Math.max(1, Math.min(150, (width - 28) / 2));
-        int left = (width - tabWidth * 2 - 4) / 2;
+        int tabs = Tab.values().length;
+        int tabWidth = Math.max(1, Math.min(132, (width - 28 - (tabs - 1) * 4) / tabs));
+        int left = (width - tabWidth * tabs - (tabs - 1) * 4) / 2;
         for (Tab value : Tab.values()) {
-            Button button = addRenderableWidget(Button.builder(tabLabel(value), ignored -> selectTab(value))
-                    .bounds(left + value.ordinal() * (tabWidth + 4), 28, tabWidth, 20).build());
-            button.active = tab != value;
+            Button button = addRenderableWidget(new PageTab(value, left + value.ordinal() * (tabWidth + 4), tabWidth));
             fixedButtons.add(button);
         }
         int buttonWidth = Math.max(1, Math.min(200, width - 24));
@@ -83,6 +83,26 @@ public final class LanWorldsScreen extends Screen {
         }
         else buildSettings();
         positionControls();
+    }
+
+    private final class PageTab extends Button.Plain {
+        private final Tab page;
+
+        PageTab(Tab page, int x, int width) {
+            super(x, 28, width, 22, tabLabel(page), ignored -> selectTab(page), DEFAULT_NARRATION);
+            this.page = page;
+        }
+
+        @Override protected void extractContents(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float delta) {
+            boolean selected = page == tab;
+            int x = getX(), y = getY();
+            graphics.fill(x, y, x + getWidth(), y + 22, selected ? 0xFF4D869E : 0xFF2E465A);
+            graphics.fillGradient(x + 1, y + 1, x + getWidth() - 1, y + 22,
+                    selected || isHoveredOrFocused() ? 0xFF284B60 : 0xFF1A2F43, 0xFF102235);
+            if (selected) graphics.fill(x + 3, y + 19, x + getWidth() - 3, y + 21, 0xFF79E0E0);
+            String label = fit(getMessage().getString(), Math.max(1, getWidth() - 10));
+            graphics.text(font, label, x + (getWidth() - font.width(label)) / 2, y + 6, 0xFFF2F9FF);
+        }
     }
 
     private void selectTab(Tab selected) {
@@ -191,6 +211,10 @@ public final class LanWorldsScreen extends Screen {
     }
 
     private void buildSettings() {
+        if (tab == Tab.ROOM_SETTINGS) {
+            buildRoomSettings();
+            return;
+        }
         var config = config();
         var styles = ToolbarLayout.Style.values();
         addSettingControl(Button.builder(toolbarValue(config.toolbarStyle), button -> {
@@ -206,18 +230,21 @@ public final class LanWorldsScreen extends Screen {
             updateToolbarControls();
         }).build();
         addSettingControl(drag, 1);
-        addSettingControl(positionButton(() -> config.selectionButtonAnchor, value -> config.selectionButtonAnchor = value), 2);
-        addSettingControl(positionButton(() -> config.lanWorldsButtonAnchor, value -> config.lanWorldsButtonAnchor = value), 3);
-        addSettingControl(positionButton(() -> config.radminButtonAnchor, value -> config.radminButtonAnchor = value), 4);
+        addSettingControl(positionButton(() -> config.selectionButtonAnchor, value -> config.selectionButtonAnchor = value, ToolbarLayout.Anchor.values()), 2);
+        addSettingControl(positionButton(() -> config.lanWorldsButtonAnchor, value -> config.lanWorldsButtonAnchor = value, ToolbarLayout.Anchor.values()), 3);
+        addSettingControl(positionButton(() -> config.radminButtonAnchor, value -> config.radminButtonAnchor = value, ToolbarLayout.RadminAnchor.values()), 4);
         updateToolbarControls();
+        contentHeight = ROOM_SETTINGS_START * SETTING_HEIGHT + 38;
+    }
 
+    private void buildRoomSettings() {
         Button query = Button.builder(toggleValue(config().queryLanStatus), button -> {
             config().queryLanStatus = !config().queryLanStatus;
             button.setMessage(toggleValue(config().queryLanStatus));
             config().save();
         }).bounds(0, 0, 140, 20).build();
         query.setTooltip(Tooltip.create(Component.translatable("screen.lanworlds.settings.query_description")));
-        addSettingControl(query, 5);
+        addSettingControl(query, 0);
 
         if (timeoutDraft == null) timeoutDraft = Integer.toString(config().queryTimeoutMs);
         timeoutBox = new EditBox(font, 0, 0, 140, 20, Component.translatable("screen.lanworlds.settings.timeout"));
@@ -227,7 +254,7 @@ public final class LanWorldsScreen extends Screen {
             timeoutDraft = value;
             validateTimeout(true);
         });
-        addSettingControl(timeoutBox, 6);
+        addSettingControl(timeoutBox, 1);
         validateTimeout(false);
 
         Button match = Button.builder(blockTypeValue(config().defaultBlockType), button -> {
@@ -238,14 +265,13 @@ public final class LanWorldsScreen extends Screen {
             config().save();
         }).bounds(0, 0, 140, 20).build();
         match.setTooltip(Tooltip.create(Component.translatable("screen.lanworlds.settings.block_type_description")));
-        addSettingControl(match, 7);
-        contentHeight = SETTING_LABELS.length * SETTING_HEIGHT + 38;
+        addSettingControl(match, 2);
+        contentHeight = (SETTING_LABELS.length - ROOM_SETTINGS_START) * SETTING_HEIGHT + 38;
     }
 
-    private Button positionButton(java.util.function.Supplier<ToolbarLayout.Anchor> current,
-                                  java.util.function.Consumer<ToolbarLayout.Anchor> save) {
+    private <T extends Enum<T>> Button positionButton(java.util.function.Supplier<T> current,
+                                                       java.util.function.Consumer<T> save, T[] values) {
         return Button.builder(toolbarValue(current.get()), button -> {
-            var values = ToolbarLayout.Anchor.values();
             var next = values[(current.get().ordinal() + 1) % values.length];
             save.accept(next);
             button.setMessage(toolbarValue(next));
@@ -262,7 +288,8 @@ public final class LanWorldsScreen extends Screen {
     }
 
     private static Component toolbarValue(Enum<?> value) {
-        return Component.translatable("screen.lanworlds.toolbar." + value.name().toLowerCase(Locale.ROOT));
+        String group = value instanceof ToolbarLayout.RadminAnchor ? "radmin_position." : "toolbar.";
+        return Component.translatable("screen.lanworlds." + group + value.name().toLowerCase(Locale.ROOT));
     }
 
     private void addSettingControl(AbstractWidget widget, int index) {
@@ -411,7 +438,9 @@ public final class LanWorldsScreen extends Screen {
     @Override
     public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float delta) {
         extractTransparentBackground(graphics);
-        graphics.fill(0, 0, width, height, 0x88000000);
+        graphics.fillGradient(0, 0, width, height, 0xE522394D, 0xF00A1828);
+        graphics.fill(contentLeft(), listTop(), contentRight(), listBottom(), 0x55112437);
+        UiSprites.draw(graphics, UiSprites.Art.BEACON, Math.max(8, width / 2 - font.width(title) / 2 - 22), 6, 16);
         graphics.centeredText(font, title, width / 2, 10, 0xFFFFFFFF);
         if (tab == Tab.BLOCKED && multiSelect) {
             int textX = contentLeft() + Math.min(104, Math.max(1, contentWidth() / 2)) + 8;
@@ -450,7 +479,8 @@ public final class LanWorldsScreen extends Screen {
             int y = origin + row.offset();
             if (y + RULE_HEIGHT <= listTop() || y >= listBottom()) continue;
             boolean selected = multiSelect && selectedRules.contains(row.rule().key());
-            graphics.fill(contentLeft(), y, contentRight(), y + RULE_HEIGHT - 2, selected ? 0x88516D86 : 0x66121920);
+            graphics.fill(contentLeft(), y, contentRight(), y + RULE_HEIGHT - 2, selected ? 0xC0396573 : 0xBC182E40);
+            if (multiSelect) UiSprites.checkbox(graphics, selected, contentLeft() + 10, y + 13, 16);
             int textX = contentLeft() + (multiSelect ? 36 : 8);
             int available = Math.max(1, row.button().getX() - textX - 12);
             Component type = blockTypeValue(row.rule().type);
@@ -465,21 +495,23 @@ public final class LanWorldsScreen extends Screen {
     }
 
     private void drawSettings(GuiGraphicsExtractor graphics) {
-        String[] labels = SETTING_LABELS;
-        for (int index = 0; index < labels.length; index++) {
+        int start = tab == Tab.ROOM_SETTINGS ? ROOM_SETTINGS_START : 0;
+        int count = tab == Tab.ROOM_SETTINGS ? SETTING_LABELS.length - start : ROOM_SETTINGS_START;
+        for (int index = 0; index < count; index++) {
+            String label = SETTING_LABELS[start + index];
             int y = listTop() + index * SETTING_HEIGHT - scrollOffset;
             if (y + SETTING_HEIGHT <= listTop() || y >= listBottom()) continue;
-            graphics.fill(contentLeft(), y, contentRight(), y + SETTING_HEIGHT - 4, 0x66121920);
-            graphics.text(font, fit(Component.translatable("screen.lanworlds.settings." + labels[index]).getString(), contentWidth() - 16),
+            graphics.fill(contentLeft(), y, contentRight(), y + SETTING_HEIGHT - 4, 0xAB173043);
+            graphics.text(font, fit(Component.translatable("screen.lanworlds.settings." + label).getString(), contentWidth() - 16),
                     contentLeft() + 8, y + 8, 0xFFE6EDF3);
-            boolean invalid = index == 6 && !timeoutValid;
+            boolean invalid = tab == Tab.ROOM_SETTINGS && index == 1 && !timeoutValid;
             Component description = Component.translatable(invalid ? "screen.lanworlds.settings.timeout_invalid"
-                    : "screen.lanworlds.settings." + labels[index] + "_description");
+                    : "screen.lanworlds.settings." + label + "_description");
             drawWrapped(graphics, description, contentLeft() + 8, y + 23, contentWidth() - 16,
                     invalid ? 0xFFFF7777 : 0xFF8E9BA6, 2);
         }
         drawWrapped(graphics, Component.translatable("screen.lanworlds.settings.saved_automatically"), contentLeft() + 8,
-                listTop() + SETTING_LABELS.length * SETTING_HEIGHT + 6 - scrollOffset, contentWidth() - 16, 0xFF81909B, 2);
+                listTop() + count * SETTING_HEIGHT + 6 - scrollOffset, contentWidth() - 16, 0xFF81909B, 2);
     }
 
     private void drawWrapped(GuiGraphicsExtractor graphics, Component text, int x, int y, int available, int color, int maxLines) {
@@ -526,7 +558,7 @@ public final class LanWorldsScreen extends Screen {
         return font.plainSubstrByWidth(value, Math.max(0, available - font.width("…"))) + "…";
     }
 
-    private enum Tab { BLOCKED, SETTINGS }
+    private enum Tab { BLOCKED, SETTINGS, ROOM_SETTINGS }
     private record Control(AbstractWidget widget, int x, int offset, int width) {}
     private record RuleRow(LanWorldsConfig.BlockRule rule, int offset, Button button) {}
 }

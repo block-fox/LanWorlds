@@ -117,6 +117,12 @@ public final class LanRoomContextScreen extends Screen {
         y += ROW_HEIGHT;
         y = addGrid(List.of(new Property("room_players", formatPlayers()),
                 new Property("room_latency", formatLatency(room == null ? -1 : room.latencyMs()))), y);
+        if (room != null && room.protocol() >= 0) {
+            var target = dev.lanworlds.integration.ServerProtocol.target();
+            y = addGrid(List.of(
+                    new Property("room_server_version", room.versionName() + " (" + room.protocol() + ")"),
+                    new Property("room_target_version", target.name() + " (" + target.id() + ")")), y);
+        }
         groups.add(new Group(Component.translatable("screen.lanworlds.room_information"), roomTop, y - roomTop + 4));
 
         if (peer != null) {
@@ -229,6 +235,7 @@ public final class LanRoomContextScreen extends Screen {
             }
             return true;
         }
+        if (mouseButton == MouseButtons.left() && copyProperty(mouseX, mouseY)) return true;
         if (!insideViewport(mouseX, mouseY)
                 && (cancelButton == null || !cancelButton.isMouseOver(mouseX, mouseY))) return false;
         return super.mouseClicked(mouseX, mouseY, mouseButton);
@@ -270,7 +277,7 @@ public final class LanRoomContextScreen extends Screen {
     public void render(GuiGraphics graphics, int mouseX, int mouseY, float delta) {
         renderBackground(graphics, mouseX, mouseY, delta);
         renderTransparentBackground(graphics);
-        graphics.fill(0, 0, width, height, 0x88000000);
+        graphics.fillGradient(0, 0, width, height, 0xE4243C50, 0xF00B1929);
         graphics.drawCenteredString(font, Component.literal(truncate(title.getString(), Math.max(1, width - 24))),
                 width / 2, 12, 0xFFFFFFFF);
 
@@ -313,7 +320,8 @@ public final class LanRoomContextScreen extends Screen {
         graphics.fill(contentLeft(), y, contentRight(), y + group.height(), 0xAD101820);
         graphics.drawString(font, truncate(group.label().getString(), Math.max(1, contentWidth() - 16)),
                 contentLeft() + 8, y + 5, 0xFF9FC8E8);
-        graphics.fill(contentLeft() + 8, y + 19, contentRight() - 8, y + 20, 0x554F6476);
+        graphics.fill(contentLeft() + 8, y + 19, contentRight() - 8, y + 20, 0x886BA3B6);
+        graphics.fill(contentLeft(), y, contentLeft() + 2, y + 20, 0xFF78C9D4);
     }
 
     private void drawFavicon(GuiGraphics graphics) {
@@ -322,13 +330,25 @@ public final class LanRoomContextScreen extends Screen {
         if (y + 48 <= listTop() || y >= listBottom()) return;
         ResourceLocation favicon = room == null || room.key() == null ? null
                 : LanRoomFaviconCache.texture(minecraft, room.key().toString(), room.favicon());
-        if (favicon != null) {
-            graphics.blit(favicon, x, y, 0.0F, 0.0F, 48, 48, 48, 48);
-        } else {
-            graphics.fill(x, y, x + 48, y + 48, 0xFF202830);
-            graphics.drawString(font, "?", x + 21, y + 20, 0xFF7E8B96);
-        }
+        UiSprites.roomCover(graphics, favicon, x, y, 48);
     }
+
+    private boolean copyProperty(double x, double y) {
+        if (minecraft == null || !insideViewport(x, y)) return false;
+        for (PropertyRow row : properties) {
+            if (row.value().isBlank() || row.value().equals(valueUnknown())) continue;
+            int top = listTop() + row.y() - scrollOffset;
+            if (x < row.x() || x >= row.x() + row.width() || y < top || y >= top + ROW_HEIGHT) continue;
+            minecraft.keyboardHandler.setClipboard(row.value());
+            copiedValue = row;
+            copiedAt = System.nanoTime();
+            return true;
+        }
+        return false;
+    }
+
+    private PropertyRow copiedValue;
+    private long copiedAt;
 
     private void drawProperty(GuiGraphics graphics, PropertyRow row, int mouseX, int mouseY) {
         int y = listTop() + row.y() - scrollOffset;
@@ -338,14 +358,20 @@ public final class LanRoomContextScreen extends Screen {
         int labelWidth = Math.min(116, Math.max(1, available * 2 / 5));
         int valueX = left + labelWidth + 8;
         int valueWidth = Math.max(1, row.x() + row.width() - 8 - valueX);
+        boolean copyable = !row.value().isBlank() && !row.value().equals(valueUnknown());
+        boolean hovered = copyable && insideViewport(mouseX, mouseY) && mouseX >= row.x()
+                && mouseX < row.x() + row.width() && mouseY >= y && mouseY < y + ROW_HEIGHT;
+        if (hovered) graphics.fill(row.x() + 2, y, row.x() + row.width() - 2, y + ROW_HEIGHT, 0x55305566);
+        boolean copied = row.equals(copiedValue) && System.nanoTime() - copiedAt < 1_400_000_000L;
         String label = row.label().getString();
-        String value = singleLine(row.value());
+        String value = copied ? Component.translatable("screen.lanworlds.copied").getString() : singleLine(row.value());
         graphics.drawString(font, truncate(label, labelWidth), left, y + 5, 0xFFB9C2CA);
         graphics.drawString(font, truncate(value, valueWidth), valueX, y + 5, 0xFFE6EAF0);
         if (insideViewport(mouseX, mouseY) && mouseX >= left && mouseX < row.x() + row.width() - 8
                 && mouseY >= y && mouseY < y + ROW_HEIGHT
-                && (font.width(label) > labelWidth || font.width(value) > valueWidth || !value.equals(row.value()))) {
+                && (hovered || font.width(label) > labelWidth || font.width(value) > valueWidth)) {
             Component full = row.label().copy().append(": ").append(row.value());
+            if (copyable) full = full.copy().append("\n").append(Component.translatable("screen.lanworlds.copy_value"));
             setTooltipForNextRenderPass(font.split(full, Math.max(1, Math.min(360, width - 32))));
         }
     }

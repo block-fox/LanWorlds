@@ -1,6 +1,8 @@
 # LanWorlds
 
-独立的 Fabric 客户端局域网房间模组，支持 Minecraft **26.3、26.2、1.21.11、1.21.1**。发布版本为 **0.2.0**。请在 [GitHub Releases](https://github.com/block-fox/LanWorlds/releases) 下载对应 Minecraft 版本的 JAR。
+![LanWorlds](docs/lanworlds-cover.png)
+
+独立的 Fabric 客户端局域网房间模组，支持 Minecraft **26.3、26.2、1.21.11、1.21.1**。发布版本为 **1.0.2**。请在 [GitHub Releases](https://github.com/block-fox/LanWorlds/releases) 下载对应 Minecraft 版本的 JAR。
 
 ## 功能
 
@@ -10,7 +12,7 @@
 - 房间列表支持多选和按默认规则批量屏蔽；已屏蔽规则也可批量恢复。
 - 顶部 LanWorlds 入口提供已屏蔽房间和设置标签页；房间暂未被发现时也能恢复屏蔽规则。
 - 独立的查询开关、查询超时和默认屏蔽方式，保存至 `config/lanworlds.json`。
-- 可选联动 [RadminLAN](https://github.com/block-fox/radminlan)，无需硬依赖其代码或 Windows 服务。
+- 可选联动 [Radmin Linker](https://github.com/block-fox/radmin-linker)，无需硬依赖其代码或 Windows 服务。
 
 ## 独立使用与联动
 
@@ -20,7 +22,13 @@
 
 RadminLAN 0.2.x 已自带旧房间功能，与 LanWorlds 不兼容；请先更新 RadminLAN。首次启动且 `lanworlds.json` 不存在时，自动从旧 `radminlan.json` 迁移房间查询设置和屏蔽规则，原文件保持完整。之后两个模组各自保存配置。
 
-多人游戏页默认显示小图标，并避让其它模组的可见按钮。点绿色信号图标，进入 **LanWorlds → 设置**，可切换仅图标、仅文字或文字加图标，也可分别选择各按钮的位置。仅图标模式下可以开启拖动，此时预设位置暂停生效。回到多人游戏页用左键拖动，松开即保存。与 **RadminLAN 0.3.1 或更新版本**同装时，蓝色盾牌也使用这些设置。
+多人游戏页默认显示小图标，并避让其它模组的可见按钮。点绿色信号图标，进入 **LanWorlds → 设置**，可切换仅图标、仅文字或文字加图标，也可分别选择各按钮的位置。仅图标模式下可以开启拖动，此时预设位置暂停生效。回到多人游戏页用左键拖动，松开即保存。与 **Radmin Linker 1.0.1** 同装时，蓝色盾牌也使用这些设置。
+
+## 房间分组和搜索
+
+在多人游戏页打开「…」菜单。开启房间分组后，可按 Radmin、IP、端口或 MOTD 归类。点击文件夹标题可折叠或展开。开启多选后，文件夹左侧的方框可一键选中或取消整组房间。
+
+搜索支持 IP、端口、MOTD 和 Radmin 用户名。候选在搜索框旁显示，点选后定位到该房间。
 
 ## 开发
 
@@ -59,4 +67,4 @@ RadminLAN 0.2.x 已自带旧房间功能，与 LanWorlds 不兼容；请先更�
 
 ## 来源与许可
 
-局域网功能从 [RadminLAN](https://github.com/block-fox/radminlan) 0.2.0 拆出并独立维护，遵循原项目的 MIT 许可。Radmin 管理、控制管道和平台后端不包含在本仓库中。
+局域网功能从 [Radmin Linker](https://github.com/block-fox/radmin-linker) 0.2.0 拆出并独立维护，遵循原项目的 MIT 许可。Radmin 管理、控制管道和平台后端不包含在本仓库中。

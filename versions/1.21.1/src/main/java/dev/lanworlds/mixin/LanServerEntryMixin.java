@@ -3,11 +3,14 @@ package dev.lanworlds.mixin;
 import dev.lanworlds.LanWorldsClient;
 import dev.lanworlds.input.MouseButtons;
 import dev.lanworlds.integration.RadminIntegration;
+import dev.lanworlds.integration.ServerProtocol;
 import dev.lanworlds.room.LanRoomFaviconCache;
 import dev.lanworlds.room.LanRoomSnapshot;
 import dev.lanworlds.room.RoomKey;
+import dev.lanworlds.room.LanRoomFolder;
 import dev.lanworlds.ui.LanRoomContextScreen;
 import dev.lanworlds.ui.LanRoomSelectionHost;
+import dev.lanworlds.ui.UiSprites;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.Screen;
@@ -45,11 +48,19 @@ public abstract class LanServerEntryMixin {
     private String lanworlds$cachedRoomAddress;
     private RoomKey lanworlds$cachedRoomKey;
 
+    private int lanworlds$rowLeft;
+
     @Inject(method = "render", at = @At("HEAD"), cancellable = true)
     private void lanworlds$drawRoomDetails(GuiGraphics graphics, int index, int contentY, int contentX,
                                             int rowWidth, int rowHeight, int mouseX, int mouseY,
                                             boolean hovered, float delta, CallbackInfo ci) {
         if (LanWorldsClient.CONFIG == null) return;
+        lanworlds$rowLeft = contentX;
+        if (serverData instanceof LanRoomFolder folder && (Object) screen instanceof LanRoomSelectionHost host) {
+            lanworlds$drawFolder(graphics, folder, host, contentX, contentY, rowWidth);
+            ci.cancel();
+            return;
+        }
         ci.cancel();
 
         RoomKey key = lanworlds$cachedRoomKey(serverData.getAddress());
@@ -65,59 +76,66 @@ public abstract class LanServerEntryMixin {
                 : Component.translatable("screen.lanworlds.radmin_lan_world");
         graphics.drawString(minecraft.font, title, textX, contentY + 1, 0xFFFFFFFF, false);
 
-        // Keep this row compact like the vanilla LAN entry. The operation
-        // page owns peer and network details, so the list only shows the
-        // cover, LAN title, LAN MOTD and address.
-        lanworlds$drawLanMotd(graphics, serverData.getMotd(), textX, contentY + 12);
-        String addressText = minecraft.options.hideServerAddress
-                ? Component.translatable("selectServer.hiddenAddress").getString() : serverData.getAddress();
-        lanworlds$drawDetail(graphics, addressText, textX, contentY + 23, textWidth, 0xFFAAAAAA);
+        boolean failed = room != null && (room.state() == LanRoomSnapshot.State.TIMED_OUT
+                || room.state() == LanRoomSnapshot.State.FAILED);
+        var motdLines = minecraft.font.split(Component.literal(serverData.getMotd()), Math.max(1, textWidth));
+        for (int line = 0; line < Math.min(2, motdLines.size()); line++) {
+            graphics.drawString(minecraft.font, motdLines.get(line), textX, contentY + 12 + line * 9, 0xFFAAAAAA);
+        }
+        if (motdLines.size() < 2) {
+            String address = minecraft.options.hideServerAddress
+                    ? Component.translatable("selectServer.hiddenAddress").getString() : serverData.getAddress();
+            lanworlds$drawDetail(graphics, address, textX, contentY + 23, textWidth, 0xFFAAAAAA);
+        }
 
         ResourceLocation favicon = room == null ? null
                 : lanworlds$cachedFavicon(serverData.getAddress(), room.favicon());
-        if (favicon != null) {
-            // Match the vanilla entry content origin exactly.  The extra pixel
-            // made the cover visibly drift right at higher GUI scales.
-            graphics.blit(favicon, contentX, contentY,
-                    0.0F, 0.0F, 32, 32, 32, 32);
-        }
+        UiSprites.roomCover(graphics, favicon, contentX, contentY, 32);
 
         if ((Object) screen instanceof LanRoomSelectionHost host && host.lanworlds$roomSelection().enabled()) {
             boolean selected = host.lanworlds$roomSelection().contains(lanworlds$cachedRoomKey(serverData.getAddress()));
             int x = contentX + 2;
             int y = contentY + 2;
-            graphics.fill(x, y, x + 13, y + 13, selected ? 0xFF4D86B8 : 0xEE151A1F);
-            graphics.renderOutline(x, y, 13, 13, 0xFFE6EDF3);
-            if (selected) {
-                graphics.fill(x + 3, y + 6, x + 5, y + 10, 0xFFFFFFFF);
-                graphics.fill(x + 5, y + 4, x + 10, y + 8, 0xFFFFFFFF);
-            }
+            UiSprites.checkbox(graphics, selected, x - 2, y - 2, 16);
         }
 
         if (room == null) return;
 
         int pingX = contentRight - 18;
         int countRight = pingX - 5;
-        String countText = room.players() >= 0 && room.maxPlayers() >= 0
+        var target = ServerProtocol.target();
+        boolean incompatible = room.state() == LanRoomSnapshot.State.READY && room.protocol() > 0 && room.protocol() != target.id();
+        String countText = failed ? "" : incompatible ? room.versionName() : room.players() >= 0 && room.maxPlayers() >= 0
                 ? room.players() + "/" + room.maxPlayers() : "";
+        countText = minecraft.font.plainSubstrByWidth(countText, Math.max(0, (pingX - textX) / 2));
         int countWidth = minecraft.font.width(countText);
         int countX = countRight - countWidth;
         if (!countText.isEmpty()) {
-            graphics.drawString(minecraft.font, countText, countX, contentY + 1, 0xFFE0E0E0);
+            graphics.drawString(minecraft.font, countText, countX, contentY + 1, incompatible ? 0xFFFF6666 : 0xFFE0E0E0);
         }
 
-        ResourceLocation pingSprite = lanworlds$pingSprite(room.latencyMs());
+        ResourceLocation pingSprite = incompatible ? ResourceLocation.withDefaultNamespace("server_list/incompatible")
+                : failed ? ResourceLocation.withDefaultNamespace("server_list/unreachable")
+                : room.latencyMs() >= 0 ? lanworlds$pingSprite(room.latencyMs())
+                : room.state() == LanRoomSnapshot.State.QUERYING ? ResourceLocation.withDefaultNamespace("server_list/pinging_1") : null;
         if (pingSprite != null) {
             graphics.blitSprite(pingSprite, pingX, contentY + 1,
                     LANWORLDS$PING_WIDTH, LANWORLDS$PING_HEIGHT);
         }
 
-        boolean pingHovered = room.latencyMs() >= 0 && lanworlds$contains(mouseX, mouseY, pingX, contentY + 1,
+        boolean pingHovered = pingSprite != null && lanworlds$contains(mouseX, mouseY, pingX, contentY + 1,
                 LANWORLDS$PING_WIDTH, LANWORLDS$PING_HEIGHT);
         boolean playersHovered = !countText.isEmpty() && lanworlds$contains(mouseX, mouseY,
                 countX, contentY, countWidth, 10);
-        if (pingHovered) {
-            screen.setTooltipForNextRenderPass(Component.translatable("multiplayer.status.ping", room.latencyMs()));
+        if (pingHovered || incompatible && playersHovered) {
+            List<Component> versionTooltip = new ArrayList<>();
+            versionTooltip.add(incompatible ? Component.translatable("multiplayer.status.incompatible")
+                    : failed ? Component.translatable("multiplayer.status.cannot_connect")
+                    : room.latencyMs() >= 0 ? Component.translatable("multiplayer.status.ping", room.latencyMs())
+                    : Component.translatable("multiplayer.status.pinging"));
+            versionTooltip.add(Component.translatable("screen.lanworlds.target_protocol", target.name(), target.id()));
+            if (room.protocol() >= 0) versionTooltip.add(Component.translatable("screen.lanworlds.server_protocol", room.versionName(), room.protocol()));
+            screen.setTooltipForNextRenderPass(versionTooltip.stream().map(Component::getVisualOrderText).toList());
         } else if (playersHovered) {
             screen.setTooltipForNextRenderPass(lanworlds$playerTooltip(room).stream().map(Component::getVisualOrderText).toList());
         }
@@ -137,9 +155,30 @@ public abstract class LanServerEntryMixin {
         return lanworlds$cachedFaviconTexture;
     }
 
+    private void lanworlds$drawFolder(GuiGraphics graphics, LanRoomFolder folder, LanRoomSelectionHost host,
+                                     int x, int y, int width) {
+        graphics.fill(x, y + 3, x + width, y + 29, 0xA8213038);
+        boolean selecting = host.lanworlds$roomSelection().enabled();
+        if (selecting) {
+            int selected = host.lanworlds$roomSelection().selectedAmong(folder.members()).size();
+            UiSprites.checkbox(graphics, selected == folder.members().size(), x + 3, y + 8, 16);
+            if (selected > 0 && selected < folder.members().size()) graphics.fill(x + 8, y + 15, x + 14, y + 17, 0xFFD5E7CB);
+        }
+        String arrow = host.lanworlds$folderCollapsed(folder.key()) ? ">" : "v";
+        int labelX = x + (selecting ? 37 : 21);
+        graphics.drawString(minecraft.font, arrow, labelX - 13, y + 12, 0xFF9BCD86);
+        String label = folder.label().getString() + " (" + folder.members().size() + ")";
+        graphics.drawString(minecraft.font, minecraft.font.plainSubstrByWidth(label, Math.max(1, x + width - labelX - 4)), labelX, y + 12, 0xFFF0F3EB);
+    }
+
     @Inject(method = "mouseClicked", at = @At("HEAD"), cancellable = true)
     private void lanworlds$blockOnControl(double mouseX, double mouseY, int mouseButton,
                                            CallbackInfoReturnable<Boolean> cir) {
+        if (serverData instanceof LanRoomFolder folder && (Object) screen instanceof LanRoomSelectionHost host) {
+            if (mouseButton == MouseButtons.left()) host.lanworlds$activateFolder(folder, mouseX < lanworlds$rowLeft + 22);
+            cir.setReturnValue(true);
+            return;
+        }
         if (LanWorldsClient.CONFIG == null) return;
 
         if (mouseButton == MouseButtons.left()) {
@@ -162,6 +201,11 @@ public abstract class LanServerEntryMixin {
         cir.setReturnValue(true);
     }
 
+    @Inject(method = "getNarration", at = @At("HEAD"), cancellable = true)
+    private void lanworlds$folderNarration(CallbackInfoReturnable<Component> result) {
+        if (serverData instanceof LanRoomFolder folder) result.setReturnValue(folder.label());
+    }
+
     private LanRoomSnapshot lanworlds$roomSnapshot() {
         if (LanWorldsClient.ROOMS == null) return null;
         RoomKey key = lanworlds$cachedRoomKey(serverData.getAddress());
@@ -173,14 +217,6 @@ public abstract class LanServerEntryMixin {
         lanworlds$cachedRoomAddress = address;
         lanworlds$cachedRoomKey = lanworlds$roomKey(address);
         return lanworlds$cachedRoomKey;
-    }
-
-    private void lanworlds$drawLanMotd(GuiGraphics graphics, String text, int x, int y) {
-        if (text == null || text.isBlank()) return;
-        // The LAN MOTD is the primary room identifier.  Do not truncate it to
-        // make room for status columns: those columns are on the first line,
-        // while the MOTD owns the complete second line.
-        graphics.drawString(minecraft.font, text, x, y, 0xFFAAAAAA);
     }
 
     private void lanworlds$drawDetail(GuiGraphics graphics, String text, int x, int y,

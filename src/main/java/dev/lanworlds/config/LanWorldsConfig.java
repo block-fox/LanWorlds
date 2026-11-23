@@ -28,7 +28,7 @@ public final class LanWorldsConfig {
     public ToolbarLayout.Style toolbarStyle = ToolbarLayout.Style.ICON;
     public ToolbarLayout.Anchor selectionButtonAnchor = ToolbarLayout.Anchor.AUTO;
     public ToolbarLayout.Anchor lanWorldsButtonAnchor = ToolbarLayout.Anchor.AUTO;
-    public ToolbarLayout.Anchor radminButtonAnchor = ToolbarLayout.Anchor.AUTO;
+    public ToolbarLayout.RadminAnchor radminButtonAnchor = ToolbarLayout.RadminAnchor.TITLE_BEFORE;
     public boolean dragToolbarIcons;
     public ToolbarLayout.Point selectionButtonPosition;
     public ToolbarLayout.Point lanWorldsButtonPosition;
@@ -36,6 +36,9 @@ public final class LanWorldsConfig {
 
     public boolean canDragToolbar() { return toolbarStyle == ToolbarLayout.Style.ICON && dragToolbarIcons; }
 
+    public boolean groupRooms;
+    public String roomGrouping = "RADMIN";
+    public String motdGroupFilter = "";
     public boolean queryLanStatus = true;
     public int queryTimeoutMs = 1000;
     public BlockMatchType defaultBlockType = BlockMatchType.IP_PORT;
@@ -62,7 +65,7 @@ public final class LanWorldsConfig {
         if (toolbarStyle == null) toolbarStyle = ToolbarLayout.Style.ICON;
         if (selectionButtonAnchor == null) selectionButtonAnchor = ToolbarLayout.Anchor.AUTO;
         if (lanWorldsButtonAnchor == null) lanWorldsButtonAnchor = ToolbarLayout.Anchor.AUTO;
-        if (radminButtonAnchor == null) radminButtonAnchor = ToolbarLayout.Anchor.AUTO;
+        if (radminButtonAnchor == null) radminButtonAnchor = ToolbarLayout.RadminAnchor.TITLE_BEFORE;
         if (toolbarStyle != ToolbarLayout.Style.ICON) dragToolbarIcons = false;
         queryTimeoutMs = Math.max(100, Math.min(10_000, queryTimeoutMs));
         if (defaultBlockType == null) defaultBlockType = BlockMatchType.IP_PORT;
