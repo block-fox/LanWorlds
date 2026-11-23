@@ -9,7 +9,8 @@ pluginManagement {
     }
 }
 
-def officialMojangRuntime = providers.gradleProperty('minecraft_version').getOrElse('') == '26.2'
+def useLocalMojangRuntime = providers.gradleProperty('minecraft_version').getOrElse('26.3') == '26.3' &&
+        providers.gradleProperty('use_local_runtime').getOrElse('false').toBoolean()
 
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.PREFER_SETTINGS)
@@ -17,10 +18,10 @@ dependencyResolutionManagement {
         maven {
             url = uri(rootDir.toString() + '/local-maven')
             // These development copies can have the same coordinates as
-            // Mojang's libraries while exposing an older API. Let Loom use
-            // the official dependencies for the 26.2 runtime instead.
+            // Mojang's libraries while exposing an older API. Only the
+            // explicit local runtime should use these copies.
             content {
-                if (officialMojangRuntime) excludeGroup 'com.mojang'
+                if (!useLocalMojangRuntime) excludeGroup 'com.mojang'
             }
         }
         maven { url = uri(rootDir.toString() + '/.gradle/loom-cache/minecraftMaven') }

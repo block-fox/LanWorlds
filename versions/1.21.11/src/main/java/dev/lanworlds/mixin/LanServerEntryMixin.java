@@ -8,12 +8,14 @@ import dev.lanworlds.room.LanRoomLayout;
 import dev.lanworlds.room.LanRoomSnapshot;
 import dev.lanworlds.room.RoomKey;
 import dev.lanworlds.ui.LanRoomContextScreen;
+import dev.lanworlds.ui.LanRoomSelectionHost;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.multiplayer.ServerSelectionList;
 import net.minecraft.client.gui.screens.multiplayer.JoinMultiplayerScreen;
 import net.minecraft.client.input.MouseButtonEvent;
+import net.minecraft.client.input.KeyEvent;
 import net.minecraft.client.renderer.RenderPipelines;
 import net.minecraft.client.server.LanServer;
 import net.minecraft.network.chat.Component;
@@ -46,6 +48,17 @@ public abstract class LanServerEntryMixin {
     private long lanworlds$cachedFaviconGeneration = -1L;
     private String lanworlds$cachedRoomAddress;
     private RoomKey lanworlds$cachedRoomKey;
+
+    @Inject(method = "renderContent", at = @At("HEAD"))
+    private void lanworlds$drawSelectedBackground(GuiGraphics graphics, int mouseX, int mouseY,
+                                                  boolean hovered, float delta, CallbackInfo ci) {
+        if (!((Object) screen instanceof LanRoomSelectionHost host) || !host.lanworlds$roomSelection().enabled()) return;
+        RoomKey key = lanworlds$cachedRoomKey(serverData.getAddress());
+        if (key == null || !host.lanworlds$roomSelection().contains(key)) return;
+        ServerSelectionList.Entry entry = (ServerSelectionList.Entry)(Object)this;
+        graphics.fill(entry.getContentX(), entry.getContentY(), entry.getContentRight(),
+                entry.getContentY() + LanRoomLayout.ROW_HEIGHT - 2, 0x554D86B8);
+    }
 
     @Redirect(method = "renderContent", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/gui/GuiGraphics;drawString(Lnet/minecraft/client/gui/Font;Lnet/minecraft/network/chat/Component;III)V", ordinal = 0))
     private void lanworlds$replaceLanHeader(GuiGraphics graphics, Font font, Component header,
@@ -89,6 +102,18 @@ public abstract class LanServerEntryMixin {
             // made the cover visibly drift right at higher GUI scales.
             graphics.blit(RenderPipelines.GUI_TEXTURED, favicon, entry.getContentX(), contentY,
                     0.0F, 0.0F, 32, 32, 32, 32);
+        }
+
+        if ((Object) screen instanceof LanRoomSelectionHost host && host.lanworlds$roomSelection().enabled()) {
+            boolean selected = host.lanworlds$roomSelection().contains(lanworlds$cachedRoomKey(serverData.getAddress()));
+            int x = entry.getContentX() + 2;
+            int y = contentY + 2;
+            graphics.fill(x, y, x + 13, y + 13, selected ? 0xFF4D86B8 : 0xEE151A1F);
+            graphics.renderOutline(x, y, 13, 13, 0xFFE6EDF3);
+            if (selected) {
+                graphics.fill(x + 3, y + 6, x + 5, y + 10, 0xFFFFFFFF);
+                graphics.fill(x + 5, y + 4, x + 10, y + 8, 0xFFFFFFFF);
+            }
         }
 
         if (room == null) return;
@@ -143,10 +168,14 @@ public abstract class LanServerEntryMixin {
         ServerSelectionList.Entry entry = (ServerSelectionList.Entry)(Object)this;
         boolean onRow = event.x() >= entry.getContentX() && event.x() <= entry.getContentRight()
                 && event.y() >= entry.getContentY() && event.y() <= entry.getContentY() + LanRoomLayout.ROW_HEIGHT;
-        // Minecraft 1.21.11 uses button 0 for left click and button 1 for right click.
-        // Keep ordinary left-clicks on the row for vanilla server joining;
-        // only the three-dot control and an explicit right-click open our menu.
-        if (event.button() == MouseButtons.left()) return;
+        if (event.button() == MouseButtons.left()) {
+            if (onRow && (Object) screen instanceof LanRoomSelectionHost host
+                    && host.lanworlds$selectRoom(lanworlds$cachedRoomKey(serverData.getAddress()),
+                    event.hasShiftDown(), event.hasControlDown())) {
+                cir.setReturnValue(true);
+            }
+            return;
+        }
         if (event.button() == MouseButtons.right() && !onRow) return;
         if (event.button() != MouseButtons.left() && event.button() != MouseButtons.right()) return;
 
@@ -158,6 +187,15 @@ public abstract class LanServerEntryMixin {
         }
         minecraft.setScreen(new LanRoomContextScreen(screen, room));
         cir.setReturnValue(true);
+    }
+
+    @Inject(method = "keyPressed", at = @At("HEAD"), cancellable = true)
+    private void lanworlds$selectWithKeyboard(KeyEvent event, CallbackInfoReturnable<Boolean> cir) {
+        if (event.isSelection() && (Object) screen instanceof LanRoomSelectionHost host
+                && host.lanworlds$roomSelection().enabled()) {
+            host.lanworlds$selectRoom(lanworlds$cachedRoomKey(serverData.getAddress()), event.hasShiftDown(), event.hasControlDown());
+            cir.setReturnValue(true);
+        }
     }
 
     private LanRoomSnapshot lanworlds$roomSnapshot() {

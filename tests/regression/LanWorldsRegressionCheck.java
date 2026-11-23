@@ -37,6 +37,8 @@ public final class LanWorldsRegressionCheck {
     public static void main(String[] args) throws Exception {
         String minecraftVersion = args.length == 0 ? "unknown" : args[0];
         checkConfigurationMigration(minecraftVersion);
+        RoomSelectionRegression.check();
+        BlockedRulesRegression.check();
         checkOptionalIntegration();
         checkRoomMatching();
         checkRepositoryShutdown();

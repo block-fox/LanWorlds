@@ -3,6 +3,7 @@ package dev.lanworlds.config;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import net.fabricmc.loader.api.FabricLoader;
+import dev.lanworlds.room.LanRoomSnapshot;
 
 import java.io.IOException;
 import java.io.Reader;
@@ -10,7 +11,12 @@ import java.io.Writer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
+import java.util.Set;
 
 /** LAN status queries and room blocking belong to LanWorlds, including without Radmin. */
 public final class LanWorldsConfig {
@@ -65,14 +71,48 @@ public final class LanWorldsConfig {
     public void block(String ip, int port, String motd) {
         BlockMatchType type = defaultBlockType == null ? BlockMatchType.IP_PORT : defaultBlockType;
         String value = type.normalize(ip, port, motd);
-        blocked.removeIf(rule -> rule != null && rule.type == type && value.equals(rule.value));
+        RuleKey key = new RuleKey(type, value);
+        blocked.removeIf(rule -> rule != null && key.equals(rule.key()));
         blocked.add(new BlockRule(type, value));
         save();
     }
 
-    public void unblock(BlockRule rule) {
-        blocked.remove(rule);
+    /** Applies the configured match type to every selected room and persists the batch once. */
+    public void blockRooms(Collection<LanRoomSnapshot> rooms) {
+        if (rooms == null || rooms.isEmpty()) return;
+        normalize();
+        BlockMatchType type = defaultBlockType;
+        var additions = new LinkedHashMap<RuleKey, BlockRule>();
+        for (LanRoomSnapshot room : rooms) {
+            if (room == null || room.key() == null || room.key().ip().isBlank()) continue;
+            String value = type.normalize(room.key().ip(), room.key().port(), room.motd());
+            additions.putIfAbsent(new RuleKey(type, value), new BlockRule(type, value));
+        }
+        if (additions.isEmpty()) return;
+        blocked.removeIf(rule -> additions.containsKey(rule.key()));
+        blocked.addAll(additions.values());
         save();
+    }
+
+    public void unblock(BlockRule rule) {
+        if (rule != null) unblockRules(List.of(rule));
+    }
+
+    /** Rules can be restored even when their rooms are absent from LAN discovery. */
+    public void unblockRules(Collection<BlockRule> rules) {
+        if (rules == null || rules.isEmpty() || blocked == null) return;
+        Set<RuleKey> keys = new HashSet<>();
+        for (BlockRule rule : rules) if (rule != null) keys.add(rule.key());
+        if (blocked.removeIf(rule -> rule != null && keys.contains(rule.key()))) save();
+    }
+
+    /** Stable across reloads; address keys follow the same case-insensitive matching as rules. */
+    public record RuleKey(BlockMatchType type, String value) {
+        public RuleKey {
+            value = value == null ? "" : value;
+            if (type == BlockMatchType.MOTD) value = type.normalize("", 0, value);
+            else value = value.trim().toLowerCase(Locale.ROOT);
+        }
     }
 
     public enum BlockMatchType {
@@ -109,5 +149,7 @@ public final class LanWorldsConfig {
         public boolean matches(String ip, int port, String motd) {
             return type != null && value != null && type.matches(ip, port, motd, value);
         }
+
+        public RuleKey key() { return new RuleKey(type, value); }
     }
 }

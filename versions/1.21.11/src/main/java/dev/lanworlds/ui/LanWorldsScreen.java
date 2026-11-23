@@ -10,15 +10,18 @@ import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.components.Tooltip;
 import net.minecraft.client.gui.components.events.GuiEventListener;
 import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.input.KeyEvent;
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.client.renderer.RenderPipelines;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
 
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
+import java.util.Set;
 
 /** Independent room block rules and LAN discovery settings. */
 public final class LanWorldsScreen extends Screen {
@@ -43,6 +46,9 @@ public final class LanWorldsScreen extends Screen {
     private int contentHeight;
     private boolean draggingScrollbar;
     private int dragGrabOffset;
+    private boolean multiSelect;
+    private final Set<LanWorldsConfig.RuleKey> selectedRules = new LinkedHashSet<>();
+    private LanWorldsConfig.RuleKey selectionAnchor;
 
     public LanWorldsScreen(Screen parent) {
         super(Component.literal("LanWorlds"));
@@ -68,7 +74,10 @@ public final class LanWorldsScreen extends Screen {
         int buttonWidth = Math.max(1, Math.min(200, width - 24));
         fixedButtons.add(addRenderableWidget(Button.builder(Component.translatable("screen.lanworlds.done"), ignored -> onClose())
                 .bounds((width - buttonWidth) / 2, height - 28, buttonWidth, 20).build()));
-        if (tab == Tab.BLOCKED) buildBlocked();
+        if (tab == Tab.BLOCKED) {
+            buildBlocked();
+            buildSelectionControls();
+        }
         else buildSettings();
         positionControls();
     }
@@ -92,10 +101,90 @@ public final class LanWorldsScreen extends Screen {
             }).bounds(0, 0, restoreWidth, 20).build();
             restore.setTooltip(Tooltip.create(Component.translatable("screen.lanworlds.unblock_description")));
             addContentWidget(restore, contentRight() - restoreWidth - 8, y + 16, restoreWidth);
+            if (multiSelect) {
+                Button select = Button.builder(Component.literal(selectedRules.contains(rule.key()) ? "\u2713" : ""),
+                        ignored -> selectRule(rule.key(), false, true)).bounds(0, 0, 20, 20).build();
+                select.setTooltip(Tooltip.create(Component.literal(singleLine(rule.value))));
+                addContentWidget(select, contentLeft() + 8, y + 16, 20);
+            }
             rules.add(new RuleRow(rule, y, restore));
             y += RULE_HEIGHT;
         }
+        selectedRules.retainAll(rules.stream().map(row -> row.rule().key()).toList());
+        if (selectionAnchor != null && rules.stream().noneMatch(row -> selectionAnchor.equals(row.rule().key()))) {
+            selectionAnchor = null;
+        }
         contentHeight = rules.isEmpty() ? 92 : y + 12;
+    }
+
+    private void buildSelectionControls() {
+        int toggleWidth = Math.min(104, Math.max(1, contentWidth() / 2));
+        Button toggle = Button.builder(Component.translatable(multiSelect ? "screen.lanworlds.single_select"
+                : "screen.lanworlds.multi_select"), ignored -> {
+            multiSelect = !multiSelect;
+            if (!multiSelect) clearSelection();
+            init();
+        }).bounds(contentLeft(), HEADER_HEIGHT, toggleWidth, 20).build();
+        toggle.active = multiSelect || !rules.isEmpty();
+        toggle.setTooltip(Tooltip.create(Component.translatable("screen.lanworlds.selection_hint")));
+        fixedButtons.add(addRenderableWidget(toggle));
+        if (!multiSelect) return;
+
+        int gap = 4;
+        int buttonWidth = Math.max(1, (contentWidth() - gap * 3) / 4);
+        String[] labels = {"select_all", "invert_selection", "clear_selection", "unblock_selected"};
+        Runnable[] actions = {this::selectAllRules, this::invertSelection, () -> {
+            clearSelection();
+            init();
+        }, this::unblockSelected};
+        for (int index = 0; index < labels.length; index++) {
+            final int actionIndex = index;
+            Button button = Button.builder(Component.translatable("screen.lanworlds." + labels[index]),
+                    ignored -> actions[actionIndex].run())
+                    .bounds(contentLeft() + index * (buttonWidth + gap), HEADER_HEIGHT + 24, buttonWidth, 20).build();
+            button.active = index < 2 ? !rules.isEmpty() : !selectedRules.isEmpty();
+            fixedButtons.add(addRenderableWidget(button));
+        }
+    }
+
+    private void clearSelection() {
+        selectedRules.clear();
+        selectionAnchor = null;
+    }
+
+    private void selectAllRules() {
+        for (RuleRow row : rules) selectedRules.add(row.rule().key());
+        init();
+    }
+
+    private void invertSelection() {
+        for (LanWorldsConfig.RuleKey key : rules.stream().map(row -> row.rule().key()).distinct().toList()) {
+            if (!selectedRules.add(key)) selectedRules.remove(key);
+        }
+        selectionAnchor = null;
+        init();
+    }
+
+    private void selectRule(LanWorldsConfig.RuleKey key, boolean range, boolean additive) {
+        List<LanWorldsConfig.RuleKey> keys = rules.stream().map(row -> row.rule().key()).distinct().toList();
+        int from = selectionAnchor == null ? -1 : keys.indexOf(selectionAnchor);
+        int to = keys.indexOf(key);
+        if (range && from >= 0 && to >= 0) {
+            if (!additive) selectedRules.clear();
+            for (int index = Math.min(from, to); index <= Math.max(from, to); index++) selectedRules.add(keys.get(index));
+        } else {
+            if (!selectedRules.add(key)) selectedRules.remove(key);
+            selectionAnchor = key;
+        }
+        init();
+    }
+
+    private void unblockSelected() {
+        List<LanWorldsConfig.BlockRule> targets = rules.stream().map(RuleRow::rule)
+                .filter(rule -> selectedRules.contains(rule.key())).toList();
+        config().unblockRules(targets);
+        clearSelection();
+        init();
     }
 
     private void buildSettings() {
@@ -209,9 +298,37 @@ public final class LanWorldsScreen extends Screen {
             }
             return true;
         }
+        if (tab == Tab.BLOCKED && event.button() == MouseButtons.left() && insideViewport(event.x(), event.y())
+                && event.x() < contentRight() && (multiSelect || event.hasControlDown() || event.hasShiftDown())) {
+            int relativeY = (int) event.y() - listTop() + scrollOffset;
+            for (RuleRow row : rules) {
+                if (relativeY >= row.offset() && relativeY < row.offset() + RULE_HEIGHT - 2
+                        && !row.button().isMouseOver(event.x(), event.y())) {
+                    multiSelect = true;
+                    selectRule(row.rule().key(), event.hasShiftDown(), event.hasControlDown());
+                    return true;
+                }
+            }
+        }
         if (!insideViewport(event.x(), event.y())
                 && fixedButtons.stream().noneMatch(button -> button.isMouseOver(event.x(), event.y()))) return false;
         return super.mouseClicked(event, doubleClick);
+    }
+
+    @Override
+    public boolean keyPressed(KeyEvent event) {
+        if (tab == Tab.BLOCKED && event.isSelectAll() && !rules.isEmpty()) {
+            multiSelect = true;
+            selectAllRules();
+            return true;
+        }
+        if (tab == Tab.BLOCKED && multiSelect && event.isEscape()) {
+            if (selectedRules.isEmpty()) multiSelect = false;
+            clearSelection();
+            init();
+            return true;
+        }
+        return super.keyPressed(event);
     }
 
     @Override
@@ -250,6 +367,11 @@ public final class LanWorldsScreen extends Screen {
         renderTransparentBackground(graphics);
         graphics.fill(0, 0, width, height, 0x88000000);
         graphics.drawCenteredString(font, title, width / 2, 10, 0xFFFFFFFF);
+        if (tab == Tab.BLOCKED && multiSelect) {
+            int textX = contentLeft() + Math.min(104, Math.max(1, contentWidth() / 2)) + 8;
+            graphics.drawString(font, fit(Component.translatable("screen.lanworlds.selected_count", selectedRules.size()).getString(),
+                    Math.max(1, contentRight() - textX)), textX, HEADER_HEIGHT + 6, 0xFFB9D6EA);
+        }
         graphics.enableScissor(contentLeft(), listTop(), contentRight(), listBottom());
         try {
             if (tab == Tab.BLOCKED) drawBlocked(graphics, mouseX, mouseY);
@@ -281,13 +403,15 @@ public final class LanWorldsScreen extends Screen {
         for (RuleRow row : rules) {
             int y = origin + row.offset();
             if (y + RULE_HEIGHT <= listTop() || y >= listBottom()) continue;
-            graphics.fill(contentLeft(), y, contentRight(), y + RULE_HEIGHT - 2, 0x66121920);
-            int available = Math.max(1, row.button().getX() - contentLeft() - 20);
+            boolean selected = multiSelect && selectedRules.contains(row.rule().key());
+            graphics.fill(contentLeft(), y, contentRight(), y + RULE_HEIGHT - 2, selected ? 0x88516D86 : 0x66121920);
+            int textX = contentLeft() + (multiSelect ? 36 : 8);
+            int available = Math.max(1, row.button().getX() - textX - 12);
             Component type = blockTypeValue(row.rule().type);
-            graphics.drawString(font, fit(type.getString(), available), contentLeft() + 8, y + 9, 0xFFB9C2CA);
+            graphics.drawString(font, fit(type.getString(), available), textX, y + 9, 0xFFB9C2CA);
             String value = singleLine(row.rule().value);
-            graphics.drawString(font, fit(value, available), contentLeft() + 8, y + 28, row.rule().enabled ? 0xFFE6EDF3 : 0xFF81909B);
-            if (insideViewport(mouseX, mouseY) && mouseX >= contentLeft() + 8 && mouseX < row.button().getX() - 4
+            graphics.drawString(font, fit(value, available), textX, y + 28, row.rule().enabled ? 0xFFE6EDF3 : 0xFF81909B);
+            if (insideViewport(mouseX, mouseY) && mouseX >= textX && mouseX < row.button().getX() - 4
                     && mouseY >= y && mouseY < y + RULE_HEIGHT - 2 && font.width(value) > available) {
                 graphics.setTooltipForNextFrame(font, font.split(Component.literal(value), Math.max(1, Math.min(360, width - 32))), mouseX, mouseY);
             }
@@ -331,7 +455,10 @@ public final class LanWorldsScreen extends Screen {
     private int contentRight() { return Math.max(contentLeft() + 1, scrollbarX() - 8); }
     private int contentWidth() { return contentRight() - contentLeft(); }
     private int scrollbarX() { return contentLeft() + panelWidth() - 6; }
-    private int listTop() { return Math.min(HEADER_HEIGHT, Math.max(0, height - FOOTER_HEIGHT - 1)); }
+    private int listTop() {
+        int header = tab == Tab.BLOCKED ? HEADER_HEIGHT + (multiSelect ? 52 : 26) : HEADER_HEIGHT;
+        return Math.min(header, Math.max(0, height - FOOTER_HEIGHT - 1));
+    }
     private int listBottom() { return Math.max(listTop() + 1, height - FOOTER_HEIGHT); }
     private int listViewportHeight() { return Math.max(1, listBottom() - listTop()); }
     private int maxScroll() { return Math.max(0, contentHeight - listViewportHeight()); }

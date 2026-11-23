@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet('26.3', '26.2', '1.21.11')]
+    [ValidateSet('26.3', '26.2', '1.21.11', '1.21.1')]
     [string]$MinecraftVersion,
     [string]$JavaHome = $env:JAVA_HOME,
     [switch]$Online
@@ -20,10 +20,11 @@ if ($runningClients.Count -gt 0) {
     throw 'Close the development client before building another version.'
 }
 
-$projectDir = if ($MinecraftVersion -eq '1.21.11') { Join-Path $root 'versions/1.21.11' } else { $root }
+$standalone = $MinecraftVersion.StartsWith('1.21.')
+$projectDir = if ($standalone) { Join-Path $root "versions/$MinecraftVersion" } else { $root }
 $gradleArguments = @('-p', $projectDir, 'build', '--no-daemon', '--console=plain')
 if (-not $Online) { $gradleArguments += '--offline' }
-if ($MinecraftVersion -ne '1.21.11') {
+if (-not $standalone) {
     $gradleArguments += @($profileLines | Where-Object { $_ -match '^[a-zA-Z_][a-zA-Z0-9_]*=' } |
         ForEach-Object { '-P' + $_.Trim() })
 }
