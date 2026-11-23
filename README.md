@@ -2,52 +2,44 @@
 
 ![LanWorlds](docs/lanworlds-cover.png)
 
-独立的 Fabric 客户端局域网房间模组，支持 Minecraft **26.3、26.2、1.21.11、1.21.1**。发布版本为 **1.0.2**。请在 [GitHub Releases](https://github.com/block-fox/LanWorlds/releases) 下载对应 Minecraft 版本的 JAR。
+**English** · [简体中文](README.zh-CN.md) · [Tiếng Việt](README.vi.md) · [Русский](README.ru.md) · [Українська](README.uk.md) · [日本語](README.ja.md)
 
-## 功能
+LanWorlds is a client-side Fabric mod that improves Minecraft's vanilla LAN room list. It supports Minecraft **26.3, 26.2, 1.21.11, and 1.21.1**. Install Fabric API and choose the JAR for your game version from [GitHub Releases](https://github.com/block-fox/LanWorlds/releases).
 
-- 增强原版多人游戏界面的局域网列表，保留原版加入方式。
-- 查看房间封面、广播 MOTD、服务器 MOTD、地址、人数与延迟。
-- 右键查看房间详情，按 IP、IP 和端口或 MOTD 屏蔽房间。
-- 房间列表支持多选和按默认规则批量屏蔽；已屏蔽规则也可批量恢复。
-- 顶部 LanWorlds 入口提供已屏蔽房间和设置标签页；房间暂未被发现时也能恢复屏蔽规则。
-- 独立的查询开关、查询超时和默认屏蔽方式，保存至 `config/lanworlds.json`。
-- 可选联动 [Radmin Linker](https://github.com/block-fox/radmin-linker)，无需硬依赖其代码或 Windows 服务。
+## Features
 
-## 独立使用与联动
+- Join rooms from the vanilla multiplayer screen. Right-click a room to see its icon, broadcast and server MOTDs, address, player count, and latency when available.
+- Block rooms by IP, IP and port, or broadcast MOTD. Select multiple rooms to block them in one action. You can also restore multiple rules from the blocked rooms tab, even while the rooms are offline.
+- Configure room status queries, timeouts, the default block rule, and multiplayer button appearance and placement. In icon-only mode, enable dragging and use the left mouse button to place the icons. Settings are stored in `config/lanworlds.json`.
 
-仅安装 LanWorlds 与 Fabric API 即可使用局域网功能。详情只显示原版可查询的信息；属性操作区域提示 **“加装radmin管理模组后生效”**，房间屏蔽仍可使用。
+## Room folders and search
 
-同时安装 **RadminLAN 0.3.0 或更新版本**时，匹配到 Radmin 虚拟 IP 的房间会显示“Radmin局域网世界”，详情增加 Radmin 用户、网络和连接信息，并提供用户与网络属性入口。未匹配的普通局域网房间保持原版信息。两个模组必须对应同一 Minecraft 版本。
+Open the **…** menu on the multiplayer screen to enable grouping, choose a grouping mode, search, or enter multi-select mode. Group rooms by Radmin versus ordinary LAN, IP, port, or MOTD. Click a folder heading to collapse or expand it. In multi-select mode, use its checkbox to select or clear every room in that folder, including collapsed rooms.
 
-RadminLAN 0.2.x 已自带旧房间功能，与 LanWorlds 不兼容；请先更新 RadminLAN。首次启动且 `lanworlds.json` 不存在时，自动从旧 `radminlan.json` 迁移房间查询设置和屏蔽规则，原文件保持完整。之后两个模组各自保存配置。
+Search by IP, port, MOTD, or Radmin username. Suggestions appear above or below the search field, depending on where the menu opens. Choose a suggestion to locate the room without changing which rooms the main list shows.
 
-多人游戏页默认显示小图标，并避让其它模组的可见按钮。点绿色信号图标，进入 **LanWorlds → 设置**，可切换仅图标、仅文字或文字加图标，也可分别选择各按钮的位置。仅图标模式下可以开启拖动，此时预设位置暂停生效。回到多人游戏页用左键拖动，松开即保存。与 **Radmin Linker 1.0.1** 同装时，蓝色盾牌也使用这些设置。
+Ctrl-click a room to enter multi-select mode. Click to toggle a room, Shift-click for a range, or Ctrl+Shift-click to add a range. Ctrl+A selects all rooms. The toolbar also supports selecting all, inverting the selection, and clearing it. Esc first clears the selection, then exits multi-select mode. Selection survives a refresh by matching rooms by address and port. Joining is paused while multi-select is active.
 
-## 房间分组和搜索
+## Optional Radmin integration
 
-在多人游戏页打开「…」菜单。开启房间分组后，可按 Radmin、IP、端口或 MOTD 归类。点击文件夹标题可折叠或展开。开启多选后，文件夹左侧的方框可一键选中或取消整组房间。
+LanWorlds works with Fabric API on its own. With Radmin Linker 1.0.1 for the same Minecraft version, rooms that match a Radmin virtual IP show user, network, and connection details. The room details page can also open Radmin user and network properties. The blue shield button uses the appearance and position settings in LanWorlds. [Radmin Linker](https://github.com/block-fox/radmin-linker)
 
-搜索支持 IP、端口、MOTD 和 Radmin 用户名。候选在搜索框旁显示，点选后定位到该房间。
+RadminLAN 0.2.x includes an older LAN room feature and is incompatible with LanWorlds. If `config/lanworlds.json` does not exist, LanWorlds can transfer old query settings and block rules from `config/radminlan.json`. The original file stays intact.
 
-## 开发
+## Development
 
-多人游戏页左上角的“多选房间”可切换批量操作，也可用 Ctrl 点击房间进入多选。多选期间点击切换选择，Shift 点击选择连续范围，Ctrl+Shift 点击追加范围，Ctrl+A 全选；工具栏提供全选、反选和清空。Esc 先清空选择，再结束多选。刷新房间数据后按地址与端口保持选择；批量操作只作用于当前列表中可见的所选房间。多选期间暂停加入房间，结束多选后恢复原版单击选中、双击加入和右键属性操作。
-
-“已屏蔽房间”页支持相同的多选操作，可一次恢复多条规则，房间暂未被发现时也能操作。
-
-26.2 与 26.3 共用根源码，使用 JDK 25；1.21.11 和 1.21.1 的独立工程使用 JDK 21。
+Minecraft 26.2 and 26.3 share the root source tree and use JDK 25. The standalone projects for 1.21.11 and 1.21.1 use JDK 21. Use the script for your target version to run the development client.
 
 ```powershell
-./scripts/run-26.3.ps1 -JavaHome '<JDK 25 路径>' -Online
-./scripts/run-26.2.ps1 -JavaHome '<JDK 25 路径>' -Online
-./scripts/run-1.21.11.ps1 -JavaHome '<JDK 21 路径>' -Online
-./scripts/run-1.21.1.ps1 -JavaHome '<JDK 21 路径>' -Online
+./scripts/run-26.3.ps1 -JavaHome '<JDK 25 path>' -Online
+./scripts/run-26.2.ps1 -JavaHome '<JDK 25 path>' -Online
+./scripts/run-1.21.11.ps1 -JavaHome '<JDK 21 path>' -Online
+./scripts/run-1.21.1.ps1 -JavaHome '<JDK 21 path>' -Online
 ```
 
-使用对应的 `scripts/build-*.ps1` 构建，产物位于 `versions/<游戏版本>/build/`。脚本用参数选择版本，不改写根配置；构建或切换版本前请退出开发客户端。离线缓存齐全时可省略 `-Online`。默认从公开 Maven 下载依赖，`libs/`、`local-maven/` 不是项目必需文件。
+Use the corresponding `scripts/build-*.ps1` to build. Artifacts go to `versions/<minecraft-version>/build/`. Close the development client before building or switching versions. Omit `-Online` when dependencies are cached. A standard checkout uses public Maven dependencies.
 
-回归检查覆盖旧配置迁移、独立配置优先级、损坏数据、可选桥接、屏蔽匹配、房间选择和规则批量操作：
+The regression checks cover config migration, optional integration, room selection, and batch blocking and restoration. For 26.2, also pass the properties from `versions/26.2/gradle.properties` as `-P` arguments. [Integration documentation (Chinese)](docs/radmin-integration.md)
 
 ```powershell
 ./gradlew.bat -I tests/regression.init.gradle lanWorldsRegressionCheck --no-configuration-cache
@@ -55,9 +47,7 @@ RadminLAN 0.2.x 已自带旧房间功能，与 LanWorlds 不兼容；请先更�
 ./gradlew.bat -p versions/1.21.1 -I ../../tests/regression.init.gradle lanWorldsRegressionCheck --no-configuration-cache
 ```
 
-26.2 检查追加 `versions/26.2/gradle.properties` 中的 `-P` 参数。联动接口见 [docs/radmin-integration.md](docs/radmin-integration.md)。
-
-运行时 Mixin 检查使用临时测试模组加载多人游戏列表和房间行。1.21.1 还会在客户端验证右键详情、多选、刷新和批量屏蔽。测试不会进入房间，配置保存在 `.tmp/mixin-smoke-runtime/`：
+The Mixin smoke checks load the multiplayer list and LAN entries in a development client. On 1.21.1, they also check right-click details, multi-select, refresh, and batch blocking. Test configuration is stored in `.tmp/mixin-smoke-runtime/`.
 
 ```powershell
 ./gradlew.bat -I tests/mixin-smoke.init.gradle runClient --no-configuration-cache
@@ -65,6 +55,6 @@ RadminLAN 0.2.x 已自带旧房间功能，与 LanWorlds 不兼容；请先更�
 ./gradlew.bat -p versions/1.21.1 -I ../../tests/mixin-smoke.init.gradle runClient --no-configuration-cache
 ```
 
-## 来源与许可
+## Origins and license
 
-局域网功能从 [Radmin Linker](https://github.com/block-fox/radmin-linker) 0.2.0 拆出并独立维护，遵循原项目的 MIT 许可。Radmin 管理、控制管道和平台后端不包含在本仓库中。
+LanWorlds began as the LAN room feature in RadminLAN 0.2.0, now called Radmin Linker. It is maintained separately under the original MIT license. [License](LICENSE)
