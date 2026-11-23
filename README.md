@@ -1,6 +1,6 @@
 # LanWorlds
 
-独立的 Fabric 客户端局域网房间模组，支持 Minecraft **26.3、26.2、1.21.11、1.21.1**。发布版本为 **0.1.0**。请在 [GitHub Releases](https://github.com/block-fox/LanWorlds/releases) 下载对应 Minecraft 版本的 JAR。
+独立的 Fabric 客户端局域网房间模组，支持 Minecraft **26.3、26.2、1.21.11、1.21.1**。发布版本为 **0.2.0**。请在 [GitHub Releases](https://github.com/block-fox/LanWorlds/releases) 下载对应 Minecraft 版本的 JAR。
 
 ## 功能
 
@@ -19,6 +19,8 @@
 同时安装 **RadminLAN 0.3.0 或更新版本**时，匹配到 Radmin 虚拟 IP 的房间会显示“Radmin局域网世界”，详情增加 Radmin 用户、网络和连接信息，并提供用户与网络属性入口。未匹配的普通局域网房间保持原版信息。两个模组必须对应同一 Minecraft 版本。
 
 RadminLAN 0.2.x 已自带旧房间功能，与 LanWorlds 不兼容；请先更新 RadminLAN。首次启动且 `lanworlds.json` 不存在时，自动从旧 `radminlan.json` 迁移房间查询设置和屏蔽规则，原文件保持完整。之后两个模组各自保存配置。
+
+多人游戏页默认显示小图标，并避让其它模组的可见按钮。点绿色信号图标，进入 **LanWorlds → 设置**，可切换仅图标、仅文字或文字加图标，也可分别选择各按钮的位置。仅图标模式下可以开启拖动，此时预设位置暂停生效。回到多人游戏页用左键拖动，松开即保存。与 **RadminLAN 0.3.1 或更新版本**同装时，蓝色盾牌也使用这些设置。
 
 ## 开发
 

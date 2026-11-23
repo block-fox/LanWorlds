@@ -1,6 +1,11 @@
 package dev.lanworlds.mixin;
 
 import dev.lanworlds.LanWorldsClient;
+import dev.lanworlds.input.MouseButtons;
+import dev.lanworlds.integration.RadminIntegration;
+import dev.lanworlds.ui.ToolbarButton;
+import dev.lanworlds.ui.ToolbarLayout;
+import net.minecraft.client.gui.components.AbstractWidget;
 import dev.lanworlds.ui.LanWorldsScreen;
 import dev.lanworlds.ui.LanRoomContextScreen;
 import dev.lanworlds.ui.LanRoomSelectionHost;
@@ -65,9 +70,13 @@ public abstract class MultiplayerScreenMixin extends Screen implements LanRoomSe
     private int lanworlds$discoveryRetryCooldown;
     private Button lanworlds$roomDetailsButton;
     private Button lanworlds$roomBlockButton;
-    private Button lanworlds$settingsButton;
+    private final List<ToolbarButton> lanworlds$entries = new ArrayList<>();
+    private ToolbarButton lanworlds$draggedEntry;
+    private double lanworlds$pressX, lanworlds$pressY;
+    private double lanworlds$grabX, lanworlds$grabY;
+    private boolean lanworlds$entryMoved;
     private final LanRoomSelection lanworlds$roomSelection = new LanRoomSelection();
-    private Button lanworlds$multiSelectButton;
+    private ToolbarButton lanworlds$multiSelectButton;
     private Button lanworlds$selectAllButton;
     private Button lanworlds$invertButton;
     private Button lanworlds$clearSelectionButton;
@@ -220,15 +229,22 @@ public abstract class MultiplayerScreenMixin extends Screen implements LanRoomSe
 
     @Inject(method = "init", at = @At("TAIL"))
     private void lanworlds$addButton(CallbackInfo ci) {
-        lanworlds$settingsButton = Button.builder(Component.translatable("screen.lanworlds.title"),
-                        ignored -> minecraft.setScreen(new LanWorldsScreen(this)))
-                .bounds(Math.max(4, width - 92), 8, 84, 20).build();
-        addRenderableWidget(lanworlds$settingsButton);
-        lanworlds$multiSelectButton = addRenderableWidget(Button.builder(Component.translatable("screen.lanworlds.multi_select"),
-                ignored -> {
+        lanworlds$entries.clear();
+        lanworlds$draggedEntry = null;
+        lanworlds$multiSelectButton = new ToolbarButton(ToolbarButton.Icon.SELECTION,
+                Component.translatable("screen.lanworlds.multi_select"), () -> {
                     lanworlds$roomSelection.setEnabled(!lanworlds$roomSelection.enabled());
                     lanworlds$updateRoomFooterActions();
-                }).bounds(8, 8, 84, 20).build());
+                });
+        lanworlds$entries.add(lanworlds$multiSelectButton);
+        lanworlds$entries.add(new ToolbarButton(ToolbarButton.Icon.SIGNAL, Component.translatable("screen.lanworlds.title"),
+                () -> minecraft.setScreen(new LanWorldsScreen(this))));
+        var radmin = RadminIntegration.managementAction();
+        if (radmin != null) {
+            lanworlds$entries.add(new ToolbarButton(ToolbarButton.Icon.RADMIN,
+                    Component.translatable("screen.radminlan.title"), () -> radmin.accept(this)));
+        }
+        lanworlds$entries.forEach(this::addRenderableWidget);
         lanworlds$selectAllButton = addRenderableWidget(Button.builder(Component.translatable("screen.lanworlds.select_all"),
                 ignored -> {
                     lanworlds$roomSelection.selectAll(lanworlds$visibleRoomKeys());
@@ -287,7 +303,6 @@ public abstract class MultiplayerScreenMixin extends Screen implements LanRoomSe
     }
 
     private void lanworlds$updateSelectionControls() {
-        if (lanworlds$settingsButton != null) lanworlds$settingsButton.setX(Math.max(4, width - 92));
         if (lanworlds$multiSelectButton == null || serverSelectionList == null) return;
         boolean selecting = lanworlds$roomSelection.enabled();
         List<RoomKey> visible = lanworlds$visibleRoomKeys();
@@ -311,6 +326,116 @@ public abstract class MultiplayerScreenMixin extends Screen implements LanRoomSe
         if (serverSelectionList.getY() != top || serverSelectionList.getHeight() != listHeight) {
             serverSelectionList.updateSizeAndPosition(width, listHeight, top);
         }
+        lanworlds$positionEntries();
+    }
+
+    @Inject(method = "tick", at = @At("TAIL"))
+    private void lanworlds$layoutEntries(CallbackInfo ci) {
+        lanworlds$positionEntries();
+    }
+
+    private void lanworlds$positionEntries() {
+        var config = LanWorldsClient.CONFIG;
+        if (config == null || lanworlds$entries.isEmpty()) return;
+        var occupied = new ArrayList<ToolbarLayout.Rect>();
+        int titleWidth = font.width(title);
+        occupied.add(new ToolbarLayout.Rect((width - titleWidth) / 2, 5, titleWidth, 22));
+        for (var child : children()) {
+            if (child instanceof AbstractWidget widget && widget.visible
+                    && !(widget instanceof ServerSelectionList) && !lanworlds$entries.contains(widget)) {
+                occupied.add(new ToolbarLayout.Rect(widget.getX(), widget.getY(), widget.getWidth(), widget.getHeight()));
+            }
+        }
+        for (ToolbarButton entry : lanworlds$entries) {
+            entry.appearance(config.toolbarStyle, lanworlds$roomSelection.enabled(), Math.max(20, (width - 24) / 2));
+            if (entry == lanworlds$draggedEntry) continue;
+            var saved = switch (entry.icon()) {
+                case SELECTION -> config.selectionButtonPosition;
+                case SIGNAL -> config.lanWorldsButtonPosition;
+                case RADMIN -> config.radminButtonPosition;
+            };
+            var anchor = switch (entry.icon()) {
+                case SELECTION -> config.selectionButtonAnchor;
+                case SIGNAL -> config.lanWorldsButtonAnchor;
+                case RADMIN -> config.radminButtonAnchor;
+            };
+            var position = config.canDragToolbar() && saved != null
+                    ? ToolbarLayout.restore(saved, entry.getWidth(), width, height)
+                    : ToolbarLayout.place(anchor, entry.getWidth(), width, height, occupied);
+            entry.setX(position.x());
+            entry.setY(position.y());
+            occupied.add(position);
+        }
+    }
+
+    private boolean lanworlds$pressEntry(double mouseX, double mouseY, int button) {
+        if (button != MouseButtons.left() || LanWorldsClient.CONFIG == null) return false;
+        for (ToolbarButton entry : lanworlds$entries.reversed()) {
+            if (!entry.isMouseOver(mouseX, mouseY)) continue;
+            if (LanWorldsClient.CONFIG.canDragToolbar()) {
+                lanworlds$draggedEntry = entry;
+                lanworlds$pressX = mouseX;
+                lanworlds$pressY = mouseY;
+                lanworlds$grabX = mouseX - entry.getX();
+                lanworlds$grabY = mouseY - entry.getY();
+                lanworlds$entryMoved = false;
+            } else {
+                entry.activate();
+                lanworlds$positionEntries();
+            }
+            return true;
+        }
+        return false;
+    }
+
+    private boolean lanworlds$moveEntry(double mouseX, double mouseY, int button) {
+        ToolbarButton entry = lanworlds$draggedEntry;
+        if (entry == null || button != MouseButtons.left()) return false;
+        if (!lanworlds$entryMoved && Math.hypot(mouseX - lanworlds$pressX, mouseY - lanworlds$pressY) < 3) return true;
+        lanworlds$entryMoved = true;
+        var position = ToolbarLayout.onScreen((int) (mouseX - lanworlds$grabX), (int) (mouseY - lanworlds$grabY),
+                entry.getWidth(), width, height);
+        boolean overlapsEntry = lanworlds$entries.stream().filter(other -> other != entry)
+                .anyMatch(other -> position.overlaps(new ToolbarLayout.Rect(other.getX(), other.getY(),
+                        other.getWidth(), other.getHeight())));
+        if (!overlapsEntry) {
+            entry.setX(position.x());
+            entry.setY(position.y());
+        }
+        return true;
+    }
+
+    private boolean lanworlds$releaseEntry(double mouseX, double mouseY, int button) {
+        ToolbarButton entry = lanworlds$draggedEntry;
+        if (entry == null || button != MouseButtons.left()) return false;
+        lanworlds$moveEntry(mouseX, mouseY, button);
+        lanworlds$draggedEntry = null;
+        if (lanworlds$entryMoved) {
+            var config = LanWorldsClient.CONFIG;
+            var point = ToolbarLayout.save(new ToolbarLayout.Rect(entry.getX(), entry.getY(), entry.getWidth(), entry.getHeight()), width, height);
+            switch (entry.icon()) {
+                case SELECTION -> config.selectionButtonPosition = point;
+                case SIGNAL -> config.lanWorldsButtonPosition = point;
+                case RADMIN -> config.radminButtonPosition = point;
+            }
+            config.save();
+        } else if (entry.isMouseOver(mouseX, mouseY)) {
+            entry.activate();
+        }
+        lanworlds$positionEntries();
+        return true;
+    }
+
+    @Override public boolean mouseClicked(double mouseX, double mouseY, int button) {
+        return lanworlds$pressEntry(mouseX, mouseY, button) || super.mouseClicked(mouseX, mouseY, button);
+    }
+
+    @Override public boolean mouseDragged(double mouseX, double mouseY, int button, double dragX, double dragY) {
+        return lanworlds$moveEntry(mouseX, mouseY, button) || super.mouseDragged(mouseX, mouseY, button, dragX, dragY);
+    }
+
+    @Override public boolean mouseReleased(double mouseX, double mouseY, int button) {
+        return lanworlds$releaseEntry(mouseX, mouseY, button) || super.mouseReleased(mouseX, mouseY, button);
     }
 
     @Override public LanRoomSelection lanworlds$roomSelection() { return lanworlds$roomSelection; }

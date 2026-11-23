@@ -4,16 +4,18 @@ allprojects {
         def smokeSources = file(project.minecraft_version.toString().startsWith('1.21.')
                 ? '../../tests/mixin-smoke' : 'tests/mixin-smoke')
         def port1211 = project.minecraft_version.toString() == '1.21.1'
+        def toolbarSmoke = project.findProperty('smokeToolbar') == 'true'
         def smokePortSources = new File(smokeSources, 'v1211')
         def smokeClasses = layout.buildDirectory.dir('classes/mixin-smoke')
         def smokeMetadata = layout.buildDirectory.file('mixin-smoke/fabric.mod.json')
         def smokeRunDir = '.tmp/mixin-smoke-runtime'
-        if (port1211) smokeRunDir += '/' + UUID.randomUUID()
+        if (port1211 || toolbarSmoke) smokeRunDir += '/' + UUID.randomUUID()
         def smokeWork = file(smokeRunDir)
         loom.runs.named('client') { runDir smokeRunDir }
         def compileSmoke = tasks.register('compileLanWorldsMixinSmoke', JavaCompile) {
             dependsOn tasks.named('classes')
-            source = port1211 ? fileTree(smokePortSources) { include '*.java' }
+            source = toolbarSmoke ? fileTree(new File(smokeSources, 'toolbar')) { include '*.java' }
+                    : port1211 ? fileTree(smokePortSources) { include '*.java' }
                     : fileTree(smokeSources) { include '*.java' }
             classpath = sourceSets.main.runtimeClasspath
             destinationDirectory = smokeClasses
@@ -21,12 +23,14 @@ allprojects {
         }
         def metadataSmoke = tasks.register('prepareLanWorldsMixinSmoke') {
             inputs.property 'port1211', port1211
+            inputs.property 'toolbarSmoke', toolbarSmoke
             outputs.file smokeMetadata
             doLast {
                 def metadata = smokeMetadata.get().asFile
                 metadata.parentFile.mkdirs()
                 metadata.text = '''{"schemaVersion":1,"id":"lanworlds_mixin_smoke","version":"1.0.0","environment":"client","entrypoints":{"client":["LanWorldsMixinSmoke"]},"depends":{"lanworlds":"*"}}'''
-                if (port1211) metadata.text = metadata.text.replace('LanWorldsMixinSmoke', 'LanWorlds1211Smoke')
+                if (toolbarSmoke) metadata.text = metadata.text.replace('LanWorldsMixinSmoke', 'ToolbarSmoke')
+                else if (port1211) metadata.text = metadata.text.replace('LanWorldsMixinSmoke', 'LanWorlds1211Smoke')
             }
         }
         def smokeJar = tasks.register('jarLanWorldsMixinSmoke', Jar) {
@@ -39,7 +43,9 @@ allprojects {
         tasks.named('runClient') {
             dependsOn smokeJar
             workingDir smokeWork
-            jvmArgs "-Dfabric.addMods=${smokeJar.get().archiveFile.get().asFile.absolutePath}"
+            String extraMods = project.findProperty('smokeExtraMods') ?: ''
+            def mods = [smokeJar.get().archiveFile.get().asFile.absolutePath, extraMods].findAll().join(File.pathSeparator)
+            jvmArgs "-Dfabric.addMods=${mods}"
             doFirst { smokeWork.mkdirs() }
         }
     }

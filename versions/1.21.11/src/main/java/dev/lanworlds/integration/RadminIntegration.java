@@ -13,7 +13,19 @@ import java.util.function.Function;
 public final class RadminIntegration {
     public static final String PROVIDER_KEY = "radminlan:room-provider-v1";
 
+    private static final String MANAGEMENT_KEY = "radminlan:open-management-v1";
+
     private RadminIntegration() {}
+
+    public static void registerToolbar() {
+        FabricLoader.getInstance().getObjectShare().put("lanworlds:manages-radmin-entry-v1", true);
+    }
+
+    @SuppressWarnings("unchecked")
+    public static Consumer<Screen> managementAction() {
+        Object action = FabricLoader.getInstance().getObjectShare().get(MANAGEMENT_KEY);
+        return action instanceof Consumer<?> consumer ? (Consumer<Screen>) consumer : null;
+    }
 
     public static boolean available() {
         return FabricLoader.getInstance().getObjectShare().get(PROVIDER_KEY) instanceof Function<?, ?>;

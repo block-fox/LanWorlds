@@ -4,6 +4,7 @@ import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import net.fabricmc.loader.api.FabricLoader;
 import dev.lanworlds.room.LanRoomSnapshot;
+import dev.lanworlds.ui.ToolbarLayout;
 
 import java.io.IOException;
 import java.io.Reader;
@@ -23,6 +24,17 @@ public final class LanWorldsConfig {
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
     private static final Path FILE = FabricLoader.getInstance().getConfigDir().resolve("lanworlds.json");
     private static final Path LEGACY_FILE = FabricLoader.getInstance().getConfigDir().resolve("radminlan.json");
+
+    public ToolbarLayout.Style toolbarStyle = ToolbarLayout.Style.ICON;
+    public ToolbarLayout.Anchor selectionButtonAnchor = ToolbarLayout.Anchor.AUTO;
+    public ToolbarLayout.Anchor lanWorldsButtonAnchor = ToolbarLayout.Anchor.AUTO;
+    public ToolbarLayout.Anchor radminButtonAnchor = ToolbarLayout.Anchor.AUTO;
+    public boolean dragToolbarIcons;
+    public ToolbarLayout.Point selectionButtonPosition;
+    public ToolbarLayout.Point lanWorldsButtonPosition;
+    public ToolbarLayout.Point radminButtonPosition;
+
+    public boolean canDragToolbar() { return toolbarStyle == ToolbarLayout.Style.ICON && dragToolbarIcons; }
 
     public boolean queryLanStatus = true;
     public int queryTimeoutMs = 1000;
@@ -47,6 +59,11 @@ public final class LanWorldsConfig {
     }
 
     private void normalize() {
+        if (toolbarStyle == null) toolbarStyle = ToolbarLayout.Style.ICON;
+        if (selectionButtonAnchor == null) selectionButtonAnchor = ToolbarLayout.Anchor.AUTO;
+        if (lanWorldsButtonAnchor == null) lanWorldsButtonAnchor = ToolbarLayout.Anchor.AUTO;
+        if (radminButtonAnchor == null) radminButtonAnchor = ToolbarLayout.Anchor.AUTO;
+        if (toolbarStyle != ToolbarLayout.Style.ICON) dragToolbarIcons = false;
         queryTimeoutMs = Math.max(100, Math.min(10_000, queryTimeoutMs));
         if (defaultBlockType == null) defaultBlockType = BlockMatchType.IP_PORT;
         if (blocked == null) blocked = new ArrayList<>();

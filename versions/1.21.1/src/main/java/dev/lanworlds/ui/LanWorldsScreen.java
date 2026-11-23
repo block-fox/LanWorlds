@@ -2,6 +2,7 @@ package dev.lanworlds.ui;
 
 import dev.lanworlds.LanWorldsClient;
 import dev.lanworlds.config.LanWorldsConfig;
+import dev.lanworlds.integration.RadminIntegration;
 import dev.lanworlds.input.MouseButtons;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.AbstractWidget;
@@ -27,6 +28,8 @@ public final class LanWorldsScreen extends Screen {
     private static final int FOOTER_HEIGHT = 38;
     private static final int RULE_HEIGHT = 52;
     private static final int SETTING_HEIGHT = 80;
+    private static final String[] SETTING_LABELS = {"toolbar_style", "toolbar_drag", "selection_position",
+            "lanworlds_position", "radmin_position", "query", "timeout", "block_type"};
     private static final ResourceLocation SCROLLER = ResourceLocation.withDefaultNamespace("widget/scroller");
     private static final ResourceLocation SCROLLER_BACKGROUND = ResourceLocation.withDefaultNamespace("widget/scroller_background");
 
@@ -186,13 +189,33 @@ public final class LanWorldsScreen extends Screen {
     }
 
     private void buildSettings() {
+        var config = config();
+        var styles = ToolbarLayout.Style.values();
+        addSettingControl(Button.builder(toolbarValue(config.toolbarStyle), button -> {
+            config.toolbarStyle = styles[(config.toolbarStyle.ordinal() + 1) % styles.length];
+            config.save();
+            button.setMessage(toolbarValue(config.toolbarStyle));
+            updateToolbarControls();
+        }).build(), 0);
+        Button drag = Button.builder(toggleValue(config.canDragToolbar()), button -> {
+            config.dragToolbarIcons = !config.dragToolbarIcons;
+            config.save();
+            button.setMessage(toggleValue(config.canDragToolbar()));
+            updateToolbarControls();
+        }).build();
+        addSettingControl(drag, 1);
+        addSettingControl(positionButton(() -> config.selectionButtonAnchor, value -> config.selectionButtonAnchor = value), 2);
+        addSettingControl(positionButton(() -> config.lanWorldsButtonAnchor, value -> config.lanWorldsButtonAnchor = value), 3);
+        addSettingControl(positionButton(() -> config.radminButtonAnchor, value -> config.radminButtonAnchor = value), 4);
+        updateToolbarControls();
+
         Button query = Button.builder(toggleValue(config().queryLanStatus), button -> {
             config().queryLanStatus = !config().queryLanStatus;
             button.setMessage(toggleValue(config().queryLanStatus));
             config().save();
         }).bounds(0, 0, 140, 20).build();
         query.setTooltip(Tooltip.create(Component.translatable("screen.lanworlds.settings.query_description")));
-        addSettingControl(query, 0);
+        addSettingControl(query, 5);
 
         if (timeoutDraft == null) timeoutDraft = Integer.toString(config().queryTimeoutMs);
         timeoutBox = new EditBox(font, 0, 0, 140, 20, Component.translatable("screen.lanworlds.settings.timeout"));
@@ -202,7 +225,7 @@ public final class LanWorldsScreen extends Screen {
             timeoutDraft = value;
             validateTimeout(true);
         });
-        addSettingControl(timeoutBox, 1);
+        addSettingControl(timeoutBox, 6);
         validateTimeout(false);
 
         Button match = Button.builder(blockTypeValue(config().defaultBlockType), button -> {
@@ -213,8 +236,31 @@ public final class LanWorldsScreen extends Screen {
             config().save();
         }).bounds(0, 0, 140, 20).build();
         match.setTooltip(Tooltip.create(Component.translatable("screen.lanworlds.settings.block_type_description")));
-        addSettingControl(match, 2);
-        contentHeight = 3 * SETTING_HEIGHT + 38;
+        addSettingControl(match, 7);
+        contentHeight = SETTING_LABELS.length * SETTING_HEIGHT + 38;
+    }
+
+    private Button positionButton(java.util.function.Supplier<ToolbarLayout.Anchor> current,
+                                  java.util.function.Consumer<ToolbarLayout.Anchor> save) {
+        return Button.builder(toolbarValue(current.get()), button -> {
+            var values = ToolbarLayout.Anchor.values();
+            var next = values[(current.get().ordinal() + 1) % values.length];
+            save.accept(next);
+            button.setMessage(toolbarValue(next));
+            config().save();
+        }).build();
+    }
+
+    private void updateToolbarControls() {
+        Button drag = (Button) controls.get(1).widget();
+        drag.active = config().toolbarStyle == ToolbarLayout.Style.ICON;
+        drag.setMessage(toggleValue(config().canDragToolbar()));
+        for (int index = 2; index <= 4; index++) controls.get(index).widget().active = !config().canDragToolbar();
+        controls.get(4).widget().active &= RadminIntegration.managementAction() != null;
+    }
+
+    private static Component toolbarValue(Enum<?> value) {
+        return Component.translatable("screen.lanworlds.toolbar." + value.name().toLowerCase(Locale.ROOT));
     }
 
     private void addSettingControl(AbstractWidget widget, int index) {
@@ -418,21 +464,21 @@ public final class LanWorldsScreen extends Screen {
     }
 
     private void drawSettings(GuiGraphics graphics) {
-        String[] labels = {"query", "timeout", "block_type"};
+        String[] labels = SETTING_LABELS;
         for (int index = 0; index < labels.length; index++) {
             int y = listTop() + index * SETTING_HEIGHT - scrollOffset;
             if (y + SETTING_HEIGHT <= listTop() || y >= listBottom()) continue;
             graphics.fill(contentLeft(), y, contentRight(), y + SETTING_HEIGHT - 4, 0x66121920);
             graphics.drawString(font, fit(Component.translatable("screen.lanworlds.settings." + labels[index]).getString(), contentWidth() - 16),
                     contentLeft() + 8, y + 8, 0xFFE6EDF3);
-            boolean invalid = index == 1 && !timeoutValid;
+            boolean invalid = index == 6 && !timeoutValid;
             Component description = Component.translatable(invalid ? "screen.lanworlds.settings.timeout_invalid"
                     : "screen.lanworlds.settings." + labels[index] + "_description");
             drawWrapped(graphics, description, contentLeft() + 8, y + 23, contentWidth() - 16,
                     invalid ? 0xFFFF7777 : 0xFF8E9BA6, 2);
         }
         drawWrapped(graphics, Component.translatable("screen.lanworlds.settings.saved_automatically"), contentLeft() + 8,
-                listTop() + 3 * SETTING_HEIGHT + 6 - scrollOffset, contentWidth() - 16, 0xFF81909B, 2);
+                listTop() + SETTING_LABELS.length * SETTING_HEIGHT + 6 - scrollOffset, contentWidth() - 16, 0xFF81909B, 2);
     }
 
     private void drawWrapped(GuiGraphics graphics, Component text, int x, int y, int available, int color, int maxLines) {

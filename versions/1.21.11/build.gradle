@@ -50,3 +50,5 @@ jar {
         rename { name -> "${name}_${archiveBaseName}" }
     }
 }
+
+sourceSets.main.java.srcDir('../../src/shared/java')

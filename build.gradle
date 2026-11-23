@@ -111,3 +111,5 @@ if (localRuntime) {
         into(layout.buildDirectory.dir("dev-libraries"))
     }
 }
+
+sourceSets.main.java.srcDir('src/shared/java')

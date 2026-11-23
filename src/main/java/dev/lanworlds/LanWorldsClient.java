@@ -1,6 +1,7 @@
 package dev.lanworlds;
 
 import dev.lanworlds.config.LanWorldsConfig;
+import dev.lanworlds.integration.RadminIntegration;
 import dev.lanworlds.room.LanRoomFaviconCache;
 import dev.lanworlds.room.LanRoomRepository;
 import net.fabricmc.api.ClientModInitializer;
@@ -17,6 +18,7 @@ public final class LanWorldsClient implements ClientModInitializer {
     @Override
     public void onInitializeClient() {
         CONFIG = LanWorldsConfig.load();
+        RadminIntegration.registerToolbar();
         ROOMS = new LanRoomRepository(CONFIG);
         ClientLifecycleEvents.CLIENT_STOPPING.register(client -> {
             ROOMS.close();
